@@ -72,7 +72,7 @@ def fuzzy_match(input_str: str, candidates: List[str], threshold: int = 80) -> L
 
 def fuzzy_match_keywords(text: str, keywords: List[str], threshold: int = 70) -> List[Tuple[str, int]]:
     """
-    Match keywords within text using fuzzy matching.
+    Match keywords within text using fuzzy matching with improved multi-word phrase support.
     
     Args:
         text: Text to search in
@@ -93,11 +93,36 @@ def fuzzy_match_keywords(text: str, keywords: List[str], threshold: int = 70) ->
     matches = []
     for keyword in keywords:
         cleaned_keyword = clean_text(keyword)
-        if cleaned_keyword:
-            # Use partial ratio for substring matching
+        if not cleaned_keyword:
+            continue
+        
+        # For multi-word phrases, use multiple matching strategies
+        keyword_words = cleaned_keyword.split()
+        
+        if len(keyword_words) == 1:
+            # Single word: use partial ratio
             score = fuzz.partial_ratio(cleaned_keyword, cleaned_text)
-            if score >= threshold:
-                matches.append((keyword, score))
+        else:
+            # Multi-word phrase: use multiple strategies and take best
+            # Strategy 1: Check if all words appear in text (exact word match)
+            all_words_found = all(word in cleaned_text for word in keyword_words)
+            if all_words_found:
+                # All words found - use token sort ratio for phrase similarity
+                score = fuzz.token_sort_ratio(cleaned_keyword, cleaned_text)
+            else:
+                # Strategy 2: Use partial ratio for substring matching
+                partial_score = fuzz.partial_ratio(cleaned_keyword, cleaned_text)
+                # Strategy 3: Check if most words match (for flexible matching)
+                words_found_count = sum(1 for word in keyword_words if word in cleaned_text)
+                word_match_ratio = (words_found_count / len(keyword_words)) * 100
+                # Strategy 4: Token set ratio for order-independent matching
+                token_score = fuzz.token_set_ratio(cleaned_keyword, cleaned_text)
+                
+                # Take the maximum of different matching strategies
+                score = max(partial_score, word_match_ratio * 0.9, token_score * 0.85)
+        
+        if score >= threshold:
+            matches.append((keyword, score))
     
     # Sort by score (highest first)
     matches.sort(key=lambda x: x[1], reverse=True)

@@ -1,10 +1,15 @@
 """
 Streamlit application for AI Job Filter Agent.
 """
+import sys
+import os
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
 from typing import Dict, Any, Optional
 
 # Import our modules
@@ -35,10 +40,25 @@ def main():
         st.session_state.filter_options = {}
     if 'data_summary' not in st.session_state:
         st.session_state.data_summary = {}
+    if 'filter_history' not in st.session_state:
+        st.session_state.filter_history = []
+    if 'saved_filters' not in st.session_state:
+        st.session_state.saved_filters = {}
     
     # Sidebar for data loading
     with st.sidebar:
         st.header("📁 Data Loading")
+        
+        # Quick reset button in sidebar
+        if st.button("🔄 Reset Filters", help="Quick reset all filters", use_container_width=True, key="sidebar_reset"):
+            if 'filtered_data' in st.session_state:
+                st.session_state.filtered_data = None
+            if 'load_filter_config' in st.session_state:
+                del st.session_state['load_filter_config']
+            st.success("✅ Filters reset!")
+            st.rerun()
+        
+        st.divider()
         
         # File upload
         uploaded_file = st.file_uploader(
@@ -146,6 +166,93 @@ def show_filter_configuration():
     """Show filter configuration interface."""
     st.header("🎯 Filter Configuration")
     
+    # Quick actions row
+    action_col1, action_col2, action_col3 = st.columns(3)
+    
+    with action_col1:
+        if st.button("🔄 Reset All Filters", help="Clear all filters and reset to defaults", use_container_width=True):
+            # Clear filter-related session state
+            if 'filtered_data' in st.session_state:
+                st.session_state.filtered_data = None
+            st.success("✅ Filters reset! Clear the form to reset all filter values.")
+            st.rerun()
+    
+    with action_col2:
+        if st.button("💾 Save Current Filters", help="Save current filter configuration for later use", use_container_width=True):
+            st.session_state['save_filter_prompt'] = True
+            st.rerun()
+    
+    with action_col3:
+        if st.button("📜 Load Saved Filters", help="Load a previously saved filter configuration", use_container_width=True):
+            st.session_state['load_filter_prompt'] = True
+            st.rerun()
+    
+    st.divider()
+    
+    # Saved filters and history section
+    if st.session_state.get('save_filter_prompt', False):
+        with st.expander("💾 Save Filter Configuration", expanded=True):
+            filter_name = st.text_input("Filter Name", placeholder="e.g., 'Senior Data Engineer', 'Remote Entry Level'")
+            if st.button("Save", key="save_filter_btn"):
+                if filter_name:
+                    # We'll save after form submission, for now just mark it
+                    st.session_state['filter_to_save'] = filter_name
+                    st.session_state['save_filter_prompt'] = False
+                    st.success(f"✅ Filter configuration will be saved as '{filter_name}' after you apply filters.")
+                else:
+                    st.error("Please enter a filter name")
+    
+    if st.session_state.get('load_filter_prompt', False) and st.session_state.saved_filters:
+        with st.expander("📜 Load Saved Filters", expanded=True):
+            if st.session_state.saved_filters:
+                selected_filter = st.selectbox(
+                    "Select saved filter",
+                    options=list(st.session_state.saved_filters.keys()),
+                    help="Choose a previously saved filter configuration to load"
+                )
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Load", key="load_filter_btn"):
+                        # Load the saved filter
+                        saved = st.session_state.saved_filters[selected_filter]
+                        st.session_state['load_filter_config'] = saved
+                        st.session_state['load_filter_prompt'] = False
+                        st.success(f"✅ Loaded '{selected_filter}' - configure filters and click Apply")
+                        st.rerun()
+                with col2:
+                    if st.button("Delete", key="delete_filter_btn"):
+                        del st.session_state.saved_filters[selected_filter]
+                        st.success(f"✅ Deleted '{selected_filter}'")
+                        st.rerun()
+            else:
+                st.info("No saved filters yet. Save your current filters to get started!")
+                st.session_state['load_filter_prompt'] = False
+    
+    # Show filter history (last 5 applications)
+    if st.session_state.filter_history:
+        with st.expander("📋 Recent Filter History", expanded=False):
+            for i, history_item in enumerate(reversed(st.session_state.filter_history[-5:]), 1):
+                timestamp = history_item.get('timestamp', 'Unknown')
+                jobs_found = history_item.get('jobs_found', 0)
+                keywords = history_item.get('keywords', {})
+                title_kw = keywords.get('title', [])
+                skills_kw = keywords.get('skills', [])
+                
+                hist_col1, hist_col2 = st.columns([3, 1])
+                with hist_col1:
+                    st.write(f"**{i}. {timestamp}** - Found {jobs_found} jobs")
+                    if title_kw:
+                        st.caption(f"Title: {', '.join(title_kw[:3])}{'...' if len(title_kw) > 3 else ''}")
+                    if skills_kw:
+                        st.caption(f"Skills: {', '.join(skills_kw[:3])}{'...' if len(skills_kw) > 3 else ''}")
+                with hist_col2:
+                    if st.button("🔄 Reload", key=f"reload_history_{i}", use_container_width=True):
+                        st.session_state['load_filter_config'] = history_item.get('config', {})
+                        st.success(f"✅ Loaded filter from {timestamp}")
+                        st.rerun()
+    
+    st.divider()
+    
     if not st.session_state.data_loaded:
         st.warning("Please load data first")
         return
@@ -162,9 +269,12 @@ def show_filter_configuration():
             
             # Company Category
             if "Company Category" in st.session_state.filter_options:
+                # Load saved filter if available
+                saved_company = st.session_state.get('load_filter_config', {}).get('company_categories', [])
                 company_categories = st.multiselect(
                     "Company Category",
                     options=st.session_state.filter_options["Company Category"],
+                    default=saved_company if saved_company else [],
                     help="Select company categories to include"
                 )
             else:
@@ -172,9 +282,11 @@ def show_filter_configuration():
             
             # Overall Job Category
             if "Overall Job Category" in st.session_state.filter_options:
+                saved_overall = st.session_state.get('load_filter_config', {}).get('overall_job_categories', [])
                 overall_job_categories = st.multiselect(
                     "Overall Job Category",
                     options=st.session_state.filter_options["Overall Job Category"],
+                    default=saved_overall if saved_overall else [],
                     help="Select overall job categories to include"
                 )
             else:
@@ -182,9 +294,11 @@ def show_filter_configuration():
             
             # Job Category
             if "Job Category" in st.session_state.filter_options:
+                saved_job = st.session_state.get('load_filter_config', {}).get('job_categories', [])
                 job_categories = st.multiselect(
                     "Job Category",
                     options=st.session_state.filter_options["Job Category"],
+                    default=saved_job if saved_job else [],
                     help="Select specific job categories to include"
                 )
             else:
@@ -192,9 +306,11 @@ def show_filter_configuration():
             
             # Location Type
             if "Location Type" in st.session_state.filter_options:
+                saved_location = st.session_state.get('load_filter_config', {}).get('location_types', [])
                 location_types = st.multiselect(
                     "Location Type",
                     options=st.session_state.filter_options["Location Type"],
+                    default=saved_location if saved_location else [],
                     help="Select work location types"
                 )
             else:
@@ -202,9 +318,11 @@ def show_filter_configuration():
             
             # Job Type
             if "JobType" in st.session_state.filter_options:
+                saved_jobtype = st.session_state.get('load_filter_config', {}).get('job_types', [])
                 job_types = st.multiselect(
                     "Job Type",
                     options=st.session_state.filter_options["JobType"],
+                    default=saved_jobtype if saved_jobtype else [],
                     help="Select employment types"
                 )
             else:
@@ -214,57 +332,136 @@ def show_filter_configuration():
             st.subheader("Keyword & Range Filters")
             
             # Title Keywords
-            title_keywords = st.text_input(
+            # Load saved filter if available
+            saved_title_kw = st.session_state.get('load_filter_config', {}).get('title_keywords', [])
+            saved_title_kw_text = '\n'.join(saved_title_kw) if saved_title_kw else ""
+            title_keywords_input = st.text_area(
                 "Title Keywords",
-                help="Enter keywords to search in job titles (comma-separated)"
+                value=saved_title_kw_text,
+                help="Enter keywords to search in job titles. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'data science' is one keyword). Use commas or new lines to separate multiple keywords. Multi-word phrases are matched intelligently.",
+                height=100,
+                placeholder="data science\nmachine learning\nor: python, java, cloud engineer"
             )
-            title_keywords = [kw.strip() for kw in title_keywords.split(",") if kw.strip()] if title_keywords else []
+            # Parse keywords: split by newline first, then by comma, preserving spaces
+            title_keywords = []
+            if title_keywords_input:
+                # Split by newlines first
+                lines = title_keywords_input.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        # Then split by comma within each line
+                        for kw in line.split(','):
+                            kw = kw.strip()
+                            if kw:
+                                title_keywords.append(kw)
+            
+            # Show parsed keywords preview
+            if title_keywords:
+                with st.expander("📋 Title Keywords Preview", expanded=False):
+                    for i, kw in enumerate(title_keywords, 1):
+                        st.text(f"{i}. '{kw}'")
+                    st.caption(f"Total: {len(title_keywords)} keyword(s)")
             
             # Skills Keywords
-            skills_keywords = st.text_input(
+            # Load saved filter if available
+            saved_skills_kw = st.session_state.get('load_filter_config', {}).get('skills_keywords', [])
+            saved_skills_kw_text = '\n'.join(saved_skills_kw) if saved_skills_kw else ""
+            skills_keywords_input = st.text_area(
                 "Skills Keywords",
-                help="Enter skills to search for (comma-separated)"
+                value=saved_skills_kw_text,
+                help="Enter skills to search for. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'machine learning' is one keyword). Use commas or new lines to separate multiple keywords. Multi-word phrases are matched intelligently.",
+                height=100,
+                placeholder="machine learning\npython programming\nor: aws, docker, kubernetes"
             )
-            skills_keywords = [kw.strip() for kw in skills_keywords.split(",") if kw.strip()] if skills_keywords else []
+            # Parse keywords: split by newline first, then by comma, preserving spaces
+            skills_keywords = []
+            if skills_keywords_input:
+                # Split by newlines first
+                lines = skills_keywords_input.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        # Then split by comma within each line
+                        for kw in line.split(','):
+                            kw = kw.strip()
+                            if kw:
+                                skills_keywords.append(kw)
+            
+            # Show parsed keywords preview
+            if skills_keywords:
+                with st.expander("📋 Skills Keywords Preview", expanded=False):
+                    for i, kw in enumerate(skills_keywords, 1):
+                        st.text(f"{i}. '{kw}'")
+                    st.caption(f"Total: {len(skills_keywords)} keyword(s)")
             
             # Experience Range
             st.subheader("Experience Range")
+            saved_exp = st.session_state.get('load_filter_config', {}).get('experience_range', {})
             exp_col1, exp_col2 = st.columns(2)
             with exp_col1:
-                min_experience = st.number_input("Min Experience (years)", min_value=0, value=None, step=1)
+                min_experience = st.number_input(
+                    "Min Experience (years)", 
+                    min_value=0, 
+                    value=saved_exp.get('min') if saved_exp else None, 
+                    step=1
+                )
             with exp_col2:
-                max_experience = st.number_input("Max Experience (years)", min_value=0, value=None, step=1)
+                max_experience = st.number_input(
+                    "Max Experience (years)", 
+                    min_value=0, 
+                    value=saved_exp.get('max') if saved_exp else None, 
+                    step=1
+                )
             
             # Salary Range
             st.subheader("Salary Range")
+            saved_sal = st.session_state.get('load_filter_config', {}).get('salary_range', {})
             sal_col1, sal_col2 = st.columns(2)
             with sal_col1:
-                min_salary = st.number_input("Min Salary", min_value=0, value=None, step=1000)
+                min_salary = st.number_input(
+                    "Min Salary", 
+                    min_value=0, 
+                    value=saved_sal.get('min') if saved_sal else None, 
+                    step=1000
+                )
             with sal_col2:
-                max_salary = st.number_input("Max Salary", min_value=0, value=None, step=1000)
+                max_salary = st.number_input(
+                    "Max Salary", 
+                    min_value=0, 
+                    value=saved_sal.get('max') if saved_sal else None, 
+                    step=1000
+                )
         
         # Fuzzy Matching Thresholds
         st.subheader("🔍 Fuzzy Matching Thresholds")
+        saved_thresholds = st.session_state.get('load_filter_config', {}).get('thresholds', {})
         col1, col2, col3 = st.columns(3)
         
         with col1:
             title_threshold = st.slider(
                 "Title Match Threshold",
-                min_value=0, max_value=100, value=FUZZY_MATCH_THRESHOLDS["title"],
+                min_value=0, 
+                max_value=100, 
+                value=saved_thresholds.get('title', FUZZY_MATCH_THRESHOLDS["title"]),
                 help="Higher = stricter matching for job titles"
             )
         
         with col2:
             skills_threshold = st.slider(
                 "Skills Match Threshold",
-                min_value=0, max_value=100, value=FUZZY_MATCH_THRESHOLDS["skills"],
+                min_value=0, 
+                max_value=100, 
+                value=saved_thresholds.get('skills', FUZZY_MATCH_THRESHOLDS["skills"]),
                 help="Higher = stricter matching for skills"
             )
         
         with col3:
             geography_threshold = st.slider(
                 "Geography Match Threshold",
-                min_value=0, max_value=100, value=FUZZY_MATCH_THRESHOLDS["geography"],
+                min_value=0, 
+                max_value=100, 
+                value=saved_thresholds.get('geography', FUZZY_MATCH_THRESHOLDS["geography"]),
                 help="Higher = stricter matching for locations"
             )
         
@@ -310,6 +507,12 @@ def apply_filters(company_categories, overall_job_categories, job_categories,
             "geography": geography_threshold
         }
         
+        # Full filter config for saving
+        full_filter_config = {
+            **filters,
+            "thresholds": thresholds
+        }
+        
         # Apply filters
         job_filter = JobFilter(thresholds)
         filtered_df = job_filter.apply_filters(st.session_state.raw_data, filters)
@@ -318,7 +521,49 @@ def apply_filters(company_categories, overall_job_categories, job_categories,
         st.session_state.filtered_data = filtered_df
         st.session_state.filter_summary = job_filter.get_filter_summary()
         
-        st.success(f"✅ Applied filters! Found {len(filtered_df)} matching jobs")
+        # Save to history
+        history_entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "jobs_found": len(filtered_df),
+            "keywords": {
+                "title": title_keywords,
+                "skills": skills_keywords
+            },
+            "config": full_filter_config
+        }
+        st.session_state.filter_history.append(history_entry)
+        
+        # Save filter if requested
+        if st.session_state.get('filter_to_save'):
+            filter_name = st.session_state['filter_to_save']
+            st.session_state.saved_filters[filter_name] = full_filter_config
+            st.session_state['filter_to_save'] = None
+            st.success(f"✅ Filter configuration saved as '{filter_name}'!")
+        
+        # Clear load filter config after use
+        if 'load_filter_config' in st.session_state:
+            del st.session_state['load_filter_config']
+        
+        # Show detailed feedback
+        if len(filtered_df) == 0:
+            st.warning("⚠️ No jobs found matching your criteria. Try:")
+            st.markdown("""
+            - **Lower the fuzzy matching thresholds** (especially Title and Skills)
+            - **Check keyword spelling** - Use the preview to verify parsed keywords
+            - **Remove some filters** to broaden the search
+            - **Use partial keywords** - e.g., 'data' instead of 'data science' if threshold is high
+            """)
+        else:
+            st.success(f"✅ Applied filters! Found {len(filtered_df)} matching jobs")
+            
+            # Show which keywords matched
+            if title_keywords or skills_keywords:
+                with st.expander("🔍 Keyword Matching Info", expanded=False):
+                    if title_keywords:
+                        st.write("**Title Keywords Used:**", ", ".join([f"'{kw}'" for kw in title_keywords]))
+                    if skills_keywords:
+                        st.write("**Skills Keywords Used:**", ", ".join([f"'{kw}'" for kw in skills_keywords]))
+                    st.caption(f"Match threshold: Title={title_threshold}%, Skills={skills_threshold}%")
         
     except Exception as e:
         st.error(f"Error applying filters: {str(e)}")
@@ -350,6 +595,66 @@ def show_results():
     # Show detailed results
     st.subheader("Matching Jobs")
     
+    # Sorting and display options
+    sort_col1, sort_col2, sort_col3 = st.columns(3)
+    
+    with sort_col1:
+        sort_by = st.selectbox(
+            "Sort by",
+            options=["Match Score", "Company", "Title", "Min Salary", "Max Salary", "Activated Date"],
+            index=0 if any("match_score" in col for col in st.session_state.filtered_data.columns) else 2
+        )
+    
+    with sort_col2:
+        sort_order = st.selectbox(
+            "Order",
+            options=["Descending", "Ascending"],
+            index=0
+        )
+    
+    with sort_col3:
+        results_per_page = st.selectbox(
+            "Results per page",
+            options=[25, 50, 100, "All"],
+            index=1
+        )
+    
+    # Apply sorting
+    sorted_df = st.session_state.filtered_data.copy()
+    if sort_by == "Match Score":
+        match_score_cols = [col for col in sorted_df.columns if "match_score" in col]
+        if match_score_cols:
+            # Use the first match score column found
+            sort_column = match_score_cols[0]
+            ascending = (sort_order == "Ascending")
+            sorted_df = sorted_df.sort_values(by=sort_column, ascending=ascending)
+    elif sort_by == "Company" and "Company" in sorted_df.columns:
+        ascending = (sort_order == "Ascending")
+        sorted_df = sorted_df.sort_values(by="Company", ascending=ascending, na_position='last')
+    elif sort_by == "Title" and "Title" in sorted_df.columns:
+        ascending = (sort_order == "Ascending")
+        sorted_df = sorted_df.sort_values(by="Title", ascending=ascending, na_position='last')
+    elif sort_by == "Min Salary" and "Min Salary" in sorted_df.columns:
+        ascending = (sort_order == "Ascending")
+        sorted_df = sorted_df.sort_values(by="Min Salary", ascending=ascending, na_position='last')
+    elif sort_by == "Max Salary" and "Max Salary" in sorted_df.columns:
+        ascending = (sort_order == "Ascending")
+        sorted_df = sorted_df.sort_values(by="Max Salary", ascending=ascending, na_position='last')
+    elif sort_by == "Activated Date" and "Activated Date" in sorted_df.columns:
+        ascending = (sort_order == "Ascending")
+        sorted_df = sorted_df.sort_values(by="Activated Date", ascending=ascending, na_position='last')
+    
+    # Apply pagination
+    if results_per_page != "All":
+        page_size = results_per_page
+        total_pages = (len(sorted_df) + page_size - 1) // page_size
+        if total_pages > 1:
+            page_num = st.number_input(f"Page (1-{total_pages})", min_value=1, max_value=total_pages, value=1, step=1)
+            start_idx = (page_num - 1) * page_size
+            end_idx = start_idx + page_size
+            sorted_df = sorted_df.iloc[start_idx:end_idx]
+            st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(st.session_state.filtered_data))} of {len(st.session_state.filtered_data)} results")
+    
     # Display options
     display_cols = st.multiselect(
         "Select columns to display",
@@ -358,9 +663,32 @@ def show_results():
     )
     
     if display_cols:
+        # Check if match score columns exist and add them if they do
+        available_cols = list(st.session_state.filtered_data.columns)
+        match_score_cols = [col for col in available_cols if 'match_score' in col]
+        
+        # Show match scores if available
+        if match_score_cols:
+            with st.expander("📊 Match Scores", expanded=False):
+                for col in match_score_cols:
+                    scores = sorted_df[col]
+                    avg_score = scores.mean()
+                    max_score = scores.max()
+                    st.metric(f"{col.replace('_match_score', '').title()} Match", 
+                             f"{avg_score:.1f}% avg", 
+                             f"{max_score:.0f}% max")
+        
+        # Create display dataframe from sorted data
+        display_df_sorted = sorted_df[display_cols].copy()
+        
+        # Add match scores to display if available and not already included
+        for col in match_score_cols:
+            if col not in display_cols:
+                display_df_sorted[col] = sorted_df[col]
+        
         st.dataframe(
-            st.session_state.filtered_data[display_cols],
-            use_container_width=True,
+            display_df_sorted,
+            width='stretch',
             hide_index=True
         )
     
@@ -439,7 +767,8 @@ def show_data_analysis():
             list(summary["location_types"].items()),
             columns=["Location Type", "Job Count"]
         )
-        st.pie_chart(location_df.set_index("Location Type"))
+        # Use bar chart instead of pie chart (Streamlit doesn't have pie_chart)
+        st.bar_chart(location_df.set_index("Location Type"))
     
     # Missing data analysis
     if "missing_data" in summary:
@@ -448,7 +777,7 @@ def show_data_analysis():
             [(col, info["count"], info["percentage"]) for col, info in summary["missing_data"].items()],
             columns=["Column", "Missing Count", "Missing Percentage"]
         )
-        st.dataframe(missing_df, use_container_width=True)
+        st.dataframe(missing_df, width='stretch')
 
 
 if __name__ == "__main__":

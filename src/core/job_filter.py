@@ -162,9 +162,9 @@ class JobFilter:
             self.logger.warning(f"Column {column} not found in DataFrame")
             return df
         
-        # Add match scores column
+        # Add match scores column (as float to avoid dtype warnings)
         df_with_scores = df.copy()
-        df_with_scores[f"{column}_match_score"] = 0
+        df_with_scores[f"{column}_match_score"] = 0.0
         
         matching_indices = []
         
@@ -292,7 +292,7 @@ class JobFilter:
             return df
         
         df_filtered = df.copy()
-        df_filtered["skills_match_score"] = 0
+        df_filtered["skills_match_score"] = 0.0
         
         matching_indices = []
         
