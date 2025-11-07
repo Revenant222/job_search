@@ -8,6 +8,17 @@ from datetime import datetime
 from src.utils.logger import app_logger
 
 
+# Predefined tags that users can assign to jobs
+PREDEFINED_TAGS = [
+    "High Interest",
+    "Mid Interest",
+    "Low Interest",
+    "Applied",
+    "Closed",
+    "NEW"
+]
+
+
 class JobTagger:
     """
     Handles tagging and tracking jobs for application.
