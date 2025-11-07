@@ -135,6 +135,7 @@ logs/*.log
 data/csv_source/*.csv
 data/csv_output/*.csv
 data/job_tags.json
+data/saved_filters.json
 docs/IMPROVEMENTS_PROPOSED.md
 .cursor/
 *.env

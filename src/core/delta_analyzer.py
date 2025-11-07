@@ -77,7 +77,8 @@ class DeltaAnalyzer:
         previous_df = self.sheet_manager.load_previous_csv(csv_filename)
         
         # Step 3.5: Backup tag file before making changes (if not first run)
-        is_first_run = previous_df is None
+        # Consider it first run if no previous CSV exists OR if previous CSV is empty
+        is_first_run = previous_df is None or previous_df.empty
         if not is_first_run:
             self._backup_tag_file()
         

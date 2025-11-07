@@ -16,7 +16,7 @@ import time
 # Import our modules
 from src.core.data_processor import DataProcessor
 from src.core.job_filter import JobFilter
-from src.core.job_tagger import JobTagger
+from src.core.job_tagger import JobTagger, PREDEFINED_TAGS
 from src.core.delta_analyzer import DeltaAnalyzer
 from config.settings import (
     FUZZY_MATCH_THRESHOLDS, 
@@ -25,6 +25,37 @@ from config.settings import (
     GOOGLE_SHEET_ID
 )
 from src.utils.logger import app_logger
+
+
+def load_saved_filters():
+    """Load saved filters from JSON file."""
+    import json
+    import os
+    filters_file = os.path.join("data", "saved_filters.json")
+    if os.path.exists(filters_file):
+        try:
+            with open(filters_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            app_logger.error(f"Error loading saved filters: {e}")
+            return {}
+    return {}
+
+
+def save_filters_to_file(filters_dict):
+    """Save filters dictionary to JSON file."""
+    import json
+    import os
+    filters_file = os.path.join("data", "saved_filters.json")
+    # Ensure data directory exists
+    os.makedirs(os.path.dirname(filters_file), exist_ok=True)
+    try:
+        with open(filters_file, 'w', encoding='utf-8') as f:
+            json.dump(filters_dict, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        app_logger.error(f"Error saving filters: {e}")
+        return False
 
 
 def main():
@@ -51,7 +82,10 @@ def main():
     if 'filter_history' not in st.session_state:
         st.session_state.filter_history = []
     if 'saved_filters' not in st.session_state:
-        st.session_state.saved_filters = {}
+        # Load saved filters from file
+        st.session_state.saved_filters = load_saved_filters()
+    if 'form_reset_counter' not in st.session_state:
+        st.session_state.form_reset_counter = 0
     if 'job_tagger' not in st.session_state:
         st.session_state.job_tagger = JobTagger()
     
@@ -60,12 +94,15 @@ def main():
         st.header("📁 Data Loading")
         
         # Quick reset button in sidebar
-        if st.button("🔄 Reset Filters", help="Quick reset all filters", use_container_width=True, key="sidebar_reset"):
+        if st.button("🔄 Reset Filters", help="Clear all filters, reset form, and return to Filter Configuration", use_container_width=True, key="sidebar_reset"):
+            # Clear all filter-related session state
             if 'filtered_data' in st.session_state:
                 st.session_state.filtered_data = None
             if 'load_filter_config' in st.session_state:
                 del st.session_state['load_filter_config']
-            st.success("✅ Filters reset!")
+            # Increment form reset counter to force widget recreation
+            st.session_state.form_reset_counter = st.session_state.get('form_reset_counter', 0) + 1
+            st.success("✅ Filters reset! Please navigate to 'Filter Configuration' tab to see reset form.")
             st.rerun()
         
         st.divider()
@@ -102,6 +139,17 @@ def main():
                 st.metric("⭐ Tagged Jobs", tagged_count)
                 if st.button("View Tagged Jobs", use_container_width=True, key="sidebar_view_tagged"):
                     st.session_state['goto_tagged_tab'] = True
+        
+        # Info about closing the app
+        st.divider()
+        with st.expander("ℹ️ About", expanded=False):
+            st.caption("""
+            **To exit:** Simply close this browser tab.
+            
+            **To stop the server:** Press `Ctrl+C` in the terminal where Streamlit is running.
+            
+            Closing the tab is the standard way to exit web applications.
+            """)
     
     # Main content area
     if st.session_state.data_loaded:
@@ -159,6 +207,12 @@ def pull_from_google_sheets():
     """Pull data from Google Sheets using delta analyzer."""
     try:
         with st.spinner("Pulling data from Google Sheets..."):
+            # Check if this is a first run (no CSV file exists)
+            from config.settings import GOOGLE_SHEET_CSV_FILENAME
+            import os
+            csv_path = os.path.join("data", "csv_source", GOOGLE_SHEET_CSV_FILENAME)
+            is_first_run = not os.path.exists(csv_path)
+            
             # Initialize delta analyzer
             delta_analyzer = DeltaAnalyzer()
             
@@ -181,14 +235,14 @@ def pull_from_google_sheets():
             st.session_state.data_summary = data_processor.get_data_summary(all_jobs_df)
             
             # Show success message with new jobs info
-            if not new_jobs_df.empty:
+            if is_first_run:
+                st.success(f"✅ Successfully loaded {len(all_jobs_df)} jobs! (First run - baseline established)")
+                st.info("ℹ️ This is your first run. On subsequent runs, new jobs will be automatically tagged with 'NEW'.")
+            elif not new_jobs_df.empty:
                 st.success(f"✅ Successfully loaded {len(all_jobs_df)} jobs! ({len(new_jobs_df)} new jobs tagged)")
-            else:
-                st.success(f"✅ Successfully loaded {len(all_jobs_df)} jobs!")
-            
-            # Show new jobs notification if any
-            if not new_jobs_df.empty:
                 st.info(f"🆕 {len(new_jobs_df)} new jobs detected and tagged with 'NEW' tag")
+            else:
+                st.success(f"✅ Successfully loaded {len(all_jobs_df)} jobs! (No new jobs detected)")
             
     except Exception as e:
         error_msg = str(e)
@@ -251,10 +305,14 @@ def show_filter_configuration():
     
     with action_col1:
         if st.button("🔄 Reset All Filters", help="Clear all filters and reset to defaults", use_container_width=True):
-            # Clear filter-related session state
+            # Clear all filter-related session state
             if 'filtered_data' in st.session_state:
                 st.session_state.filtered_data = None
-            st.success("✅ Filters reset! Clear the form to reset all filter values.")
+            if 'load_filter_config' in st.session_state:
+                del st.session_state['load_filter_config']
+            # Increment form reset counter to force widget recreation
+            st.session_state.form_reset_counter = st.session_state.get('form_reset_counter', 0) + 1
+            st.success("✅ All filters reset! Form values cleared.")
             st.rerun()
     
     with action_col2:
@@ -272,17 +330,50 @@ def show_filter_configuration():
     # Saved filters and history section
     if st.session_state.get('save_filter_prompt', False):
         with st.expander("💾 Save Filter Configuration", expanded=True):
-            filter_name = st.text_input("Filter Name", placeholder="e.g., 'Senior Data Engineer', 'Remote Entry Level'")
-            if st.button("Save", key="save_filter_btn"):
-                if filter_name:
-                    # We'll save after form submission, for now just mark it
-                    st.session_state['filter_to_save'] = filter_name
+            filter_name = st.text_input(
+                "Filter Name", 
+                placeholder="e.g., 'Senior Data Engineer', 'Remote Entry Level'", 
+                key="save_filter_name",
+                value=st.session_state.get('save_filter_name_input', '')
+            )
+            # Store the name in session state so form can access it
+            if filter_name:
+                st.session_state['save_filter_name_input'] = filter_name
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Cancel", key="cancel_save_btn", use_container_width=True):
                     st.session_state['save_filter_prompt'] = False
-                    st.success(f"✅ Filter configuration will be saved as '{filter_name}' after you apply filters.")
-                else:
-                    st.error("Please enter a filter name")
+                    if 'save_filter_name_input' in st.session_state:
+                        del st.session_state['save_filter_name_input']
+                    st.rerun()
+            with col2:
+                if st.button("💾 Save", key="save_filter_btn", use_container_width=True, type="primary"):
+                    if not filter_name or not filter_name.strip():
+                        st.error("Please enter a filter name")
+                    else:
+                        # Get the most recent filter configuration from history, or use current form values
+                        if st.session_state.filter_history:
+                            # Use the most recent applied filter configuration
+                            most_recent = st.session_state.filter_history[-1]
+                            filter_config = most_recent.get('config', {})
+                        else:
+                            # No history - prompt to apply filters first
+                            st.warning("⚠️ Please apply filters first, then save. Click '🚀 Apply Filters' in the form below.")
+                            st.stop()
+                        
+                        # Save the filter
+                        st.session_state.saved_filters[filter_name.strip()] = filter_config
+                        if save_filters_to_file(st.session_state.saved_filters):
+                            st.session_state['save_filter_prompt'] = False
+                            if 'save_filter_name_input' in st.session_state:
+                                del st.session_state['save_filter_name_input']
+                            st.success(f"✅ Filter configuration saved as '{filter_name.strip()}'!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to save filter configuration to file.")
     
-    if st.session_state.get('load_filter_prompt', False) and st.session_state.saved_filters:
+    if st.session_state.get('load_filter_prompt', False):
         with st.expander("📜 Load Saved Filters", expanded=True):
             if st.session_state.saved_filters:
                 selected_filter = st.selectbox(
@@ -296,17 +387,24 @@ def show_filter_configuration():
                         # Load the saved filter
                         saved = st.session_state.saved_filters[selected_filter]
                         st.session_state['load_filter_config'] = saved
+                        st.session_state['loading_saved_filter'] = True
+                        # Increment reset counter to force widget recreation with loaded values
+                        st.session_state.form_reset_counter = st.session_state.get('form_reset_counter', 0) + 1
                         st.session_state['load_filter_prompt'] = False
-                        st.success(f"✅ Loaded '{selected_filter}' - configure filters and click Apply")
+                        st.success(f"✅ Loaded '{selected_filter}' - form values updated. Click Apply Filters to use them.")
                         st.rerun()
                 with col2:
                     if st.button("Delete", key="delete_filter_btn"):
                         del st.session_state.saved_filters[selected_filter]
+                        # Persist deletion to file
+                        save_filters_to_file(st.session_state.saved_filters)
                         st.success(f"✅ Deleted '{selected_filter}'")
                         st.rerun()
             else:
                 st.info("No saved filters yet. Save your current filters to get started!")
-                st.session_state['load_filter_prompt'] = False
+                if st.button("Close", key="close_load_prompt"):
+                    st.session_state['load_filter_prompt'] = False
+                    st.rerun()
     
     # Show filter history (last 5 applications)
     if st.session_state.filter_history:
@@ -342,6 +440,18 @@ def show_filter_configuration():
     
     # Create filter form
     with st.form("filter_form"):
+        # Get reset counter for unique widget keys
+        reset_key = st.session_state.get('form_reset_counter', 0)
+        
+        # Ensure load_filter_config is cleared if we're resetting
+        if reset_key > 0 and 'load_filter_config' in st.session_state:
+            # Only clear if this is a fresh reset (not loading a saved filter)
+            if not st.session_state.get('loading_saved_filter', False):
+                del st.session_state['load_filter_config']
+            else:
+                # Clear the loading flag after using it
+                del st.session_state['loading_saved_filter']
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -355,7 +465,8 @@ def show_filter_configuration():
                     "Company Category",
                     options=st.session_state.filter_options["Company Category"],
                     default=saved_company if saved_company else [],
-                    help="Select company categories to include"
+                    help="Select company categories to include",
+                    key=f"company_cat_{reset_key}"
                 )
             else:
                 company_categories = []
@@ -367,7 +478,8 @@ def show_filter_configuration():
                     "Overall Job Category",
                     options=st.session_state.filter_options["Overall Job Category"],
                     default=saved_overall if saved_overall else [],
-                    help="Select overall job categories to include"
+                    help="Select overall job categories to include",
+                    key=f"overall_job_cat_{reset_key}"
                 )
             else:
                 overall_job_categories = []
@@ -379,7 +491,8 @@ def show_filter_configuration():
                     "Job Category",
                     options=st.session_state.filter_options["Job Category"],
                     default=saved_job if saved_job else [],
-                    help="Select specific job categories to include"
+                    help="Select specific job categories to include",
+                    key=f"job_cat_{reset_key}"
                 )
             else:
                 job_categories = []
@@ -391,7 +504,8 @@ def show_filter_configuration():
                     "Location Type",
                     options=st.session_state.filter_options["Location Type"],
                     default=saved_location if saved_location else [],
-                    help="Select work location types"
+                    help="Select work location types",
+                    key=f"location_type_{reset_key}"
                 )
             else:
                 location_types = []
@@ -403,32 +517,23 @@ def show_filter_configuration():
                     "Job Type",
                     options=st.session_state.filter_options["JobType"],
                     default=saved_jobtype if saved_jobtype else [],
-                    help="Select employment types"
+                    help="Select employment types",
+                    key=f"job_type_{reset_key}"
                 )
             else:
                 job_types = []
             
             # Filter By Tag
             st.divider()
-            tagger = st.session_state.job_tagger
             
-            # Get all available tags from all jobs
-            all_tags = set()
-            for job_id, tags in tagger.job_tags.items():
-                all_tags.update(tags)
-            available_tags = sorted(list(all_tags))
-            
-            if available_tags:
-                saved_tags = st.session_state.get('load_filter_config', {}).get('tags', [])
-                selected_tags = st.multiselect(
-                    "🏷️ Filter By Tag",
-                    options=available_tags,
-                    default=saved_tags if saved_tags else [],
-                    help="Filter to show only jobs with selected tags. Jobs matching ANY selected tag will be shown."
-                )
-            else:
-                selected_tags = []
-                st.info("No tags available. Tag jobs in the Results tab to filter by tags.")
+            saved_tags = st.session_state.get('load_filter_config', {}).get('tags', [])
+            selected_tags = st.multiselect(
+                "🏷️ Filter By Tag",
+                options=PREDEFINED_TAGS,
+                default=saved_tags if saved_tags else [],
+                help="Filter to show only jobs with selected tags. Jobs matching ANY selected tag will be shown.",
+                key=f"tags_{reset_key}"
+            )
         
         with col2:
             st.subheader("Keyword & Range Filters")
@@ -442,7 +547,8 @@ def show_filter_configuration():
                 value=saved_title_kw_text,
                 help="Enter keywords to search in job titles. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'data science' is one keyword). Use commas or new lines to separate multiple keywords. Multiple keywords use OR logic - jobs matching ANY keyword will be included.",
                 height=100,
-                placeholder="data science\nmachine learning\nor: python, java, cloud engineer"
+                placeholder="data science\nmachine learning\nor: python, java, cloud engineer",
+                key=f"title_keywords_{reset_key}"
             )
             # Parse keywords: split by newline first, then by comma, preserving spaces
             title_keywords = []
@@ -474,7 +580,8 @@ def show_filter_configuration():
                 value=saved_skills_kw_text,
                 help="Enter skills to search for. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'machine learning' is one keyword). Use commas or new lines to separate multiple keywords. Multiple keywords use OR logic - jobs matching ANY keyword will be included.",
                 height=100,
-                placeholder="machine learning\npython programming\nor: aws, docker, kubernetes"
+                placeholder="machine learning\npython programming\nor: aws, docker, kubernetes",
+                key=f"skills_keywords_{reset_key}"
             )
             # Parse keywords: split by newline first, then by comma, preserving spaces
             skills_keywords = []
@@ -506,14 +613,16 @@ def show_filter_configuration():
                     "Min Experience (years)", 
                     min_value=0, 
                     value=saved_exp.get('min') if saved_exp else None, 
-                    step=1
+                    step=1,
+                    key=f"min_exp_{reset_key}"
                 )
             with exp_col2:
                 max_experience = st.number_input(
                     "Max Experience (years)", 
                     min_value=0, 
                     value=saved_exp.get('max') if saved_exp else None, 
-                    step=1
+                    step=1,
+                    key=f"max_exp_{reset_key}"
                 )
             
             # Salary Range
@@ -525,14 +634,16 @@ def show_filter_configuration():
                     "Min Salary", 
                     min_value=0, 
                     value=saved_sal.get('min') if saved_sal else None, 
-                    step=1000
+                    step=1000,
+                    key=f"min_sal_{reset_key}"
                 )
             with sal_col2:
                 max_salary = st.number_input(
                     "Max Salary", 
                     min_value=0, 
                     value=saved_sal.get('max') if saved_sal else None, 
-                    step=1000
+                    step=1000,
+                    key=f"max_sal_{reset_key}"
                 )
         
         # Fuzzy Matching Thresholds
@@ -546,7 +657,8 @@ def show_filter_configuration():
                 min_value=0, 
                 max_value=100, 
                 value=saved_thresholds.get('title', FUZZY_MATCH_THRESHOLDS["title"]),
-                help="Higher = stricter matching for job titles"
+                help="Higher = stricter matching for job titles",
+                key=f"title_thresh_{reset_key}"
             )
         
         with col2:
@@ -555,7 +667,8 @@ def show_filter_configuration():
                 min_value=0, 
                 max_value=100, 
                 value=saved_thresholds.get('skills', FUZZY_MATCH_THRESHOLDS["skills"]),
-                help="Higher = stricter matching for skills"
+                help="Higher = stricter matching for skills",
+                key=f"skills_thresh_{reset_key}"
             )
         
         with col3:
@@ -564,18 +677,30 @@ def show_filter_configuration():
                 min_value=0, 
                 max_value=100, 
                 value=saved_thresholds.get('geography', FUZZY_MATCH_THRESHOLDS["geography"]),
-                help="Higher = stricter matching for locations"
+                help="Higher = stricter matching for locations",
+                key=f"geo_thresh_{reset_key}"
             )
         
-        # Apply filters button
-        if st.form_submit_button("🚀 Apply Filters"):
-            apply_filters(
-                company_categories, overall_job_categories, job_categories,
-                location_types, job_types, title_keywords, skills_keywords,
-                min_experience, max_experience, min_salary, max_salary,
-                title_threshold, skills_threshold, geography_threshold,
-                selected_tags
-            )
+        # Form action buttons
+        button_col1, button_col2 = st.columns(2)
+        
+        with button_col1:
+            if st.form_submit_button("🚀 Apply Filters", use_container_width=True):
+                apply_filters(
+                    company_categories, overall_job_categories, job_categories,
+                    location_types, job_types, title_keywords, skills_keywords,
+                    min_experience, max_experience, min_salary, max_salary,
+                    title_threshold, skills_threshold, geography_threshold,
+                    selected_tags
+                )
+        
+        with button_col2:
+            # Clear button to reset form
+            if st.form_submit_button("🔄 Clear Form", use_container_width=True, help="Clear all form values"):
+                if 'load_filter_config' in st.session_state:
+                    del st.session_state['load_filter_config']
+                st.session_state.form_reset_counter = st.session_state.get('form_reset_counter', 0) + 1
+                st.rerun()
 
 
 def apply_filters(company_categories, overall_job_categories, job_categories,
@@ -644,13 +769,6 @@ def apply_filters(company_categories, overall_job_categories, job_categories,
             "config": full_filter_config
         }
         st.session_state.filter_history.append(history_entry)
-        
-        # Save filter if requested
-        if st.session_state.get('filter_to_save'):
-            filter_name = st.session_state['filter_to_save']
-            st.session_state.saved_filters[filter_name] = full_filter_config
-            st.session_state['filter_to_save'] = None
-            st.success(f"✅ Filter configuration saved as '{filter_name}'!")
         
         # Clear load filter config after use
         if 'load_filter_config' in st.session_state:
@@ -805,11 +923,19 @@ def show_results():
             display_df_sorted['#'] = range(1, len(display_df_sorted) + 1)
             
             tagger = st.session_state.job_tagger
+            
+            # Add tags column to show what tags each job has
+            display_df_sorted['Tags'] = sorted_df.reset_index(drop=True)['job_id'].astype(str).apply(
+                lambda x: ', '.join(tagger.get_job_tags(x)) if tagger.get_job_tags(x) else ''
+            )
+            
+            # Add tagged indicator column
             display_df_sorted['⭐ Tagged'] = sorted_df.reset_index(drop=True)['job_id'].astype(str).apply(
                 lambda x: '✅' if tagger.is_tagged(x) else ''
             )
-            # Reorder to show row number and tag column first
-            cols = ['#', '⭐ Tagged'] + [c for c in display_df_sorted.columns if c not in ['#', '⭐ Tagged']]
+            
+            # Reorder to show row number, tag indicator, tags, then other columns
+            cols = ['#', '⭐ Tagged', 'Tags'] + [c for c in display_df_sorted.columns if c not in ['#', '⭐ Tagged', 'Tags']]
             display_df_sorted = display_df_sorted[cols]
             
             # Store mapping of row number to job_id for quick selection
@@ -982,16 +1108,53 @@ def show_results():
                     
                     if selected_job:
                         tagger = st.session_state.job_tagger
-                        is_tagged = tagger.is_tagged(selected_job)
-                        if is_tagged:
-                            if st.button("❌ Untag Job", key="untag_btn", use_container_width=True):
-                                tagger.untag_job(selected_job)
-                                st.success("✅ Job untagged!")
-                                st.rerun()
-                        else:
-                            if st.button("⭐ Tag Job", key="tag_btn", use_container_width=True):
-                                tagger.tag_job(selected_job)
-                                st.success("✅ Job tagged! View in 'Tagged Jobs' tab.")
+                        
+                        # Show current tags for this job
+                        current_tags = tagger.get_job_tags(selected_job)
+                        # Filter to only show predefined tags (in case there are old/invalid tags)
+                        current_tags_filtered = [tag for tag in current_tags if tag in PREDEFINED_TAGS]
+                        if current_tags:
+                            st.write("**Current Tags:**")
+                            tag_cols = st.columns(min(len(current_tags), 3))
+                            for idx, tag in enumerate(current_tags):
+                                with tag_cols[idx % 3]:
+                                    # Show invalid tags differently
+                                    if tag in PREDEFINED_TAGS:
+                                        st.info(f"🏷️ {tag}")
+                                    else:
+                                        st.warning(f"⚠️ {tag} (not in predefined tags)")
+                        
+                        # Tag selection
+                        st.write("**Add/Remove Tags:**")
+                        selected_tags_to_add = st.multiselect(
+                            "Select tags to add/remove",
+                            options=PREDEFINED_TAGS,
+                            default=current_tags_filtered,  # Only use filtered tags as default
+                            key=f"tag_selector_{selected_job}",
+                            help="Select tags for this job. Tags will be added or removed based on your selection."
+                        )
+                        
+                        # Apply tag changes
+                        if st.button("💾 Update Tags", key="update_tags_btn", use_container_width=True):
+                            # Remove tags that are no longer selected (including invalid ones)
+                            for tag in current_tags:
+                                if tag not in selected_tags_to_add:
+                                    tagger.remove_tag(selected_job, tag)
+                            
+                            # Add tags that are newly selected
+                            for tag in selected_tags_to_add:
+                                if tag not in current_tags_filtered:
+                                    tagger.add_tag(selected_job, tag)
+                            
+                            st.success("✅ Tags updated!")
+                            st.rerun()
+                        
+                        # Quick untag all button
+                        if current_tags:
+                            if st.button("❌ Remove All Tags", key="untag_all_btn", use_container_width=True):
+                                for tag in current_tags:
+                                    tagger.remove_tag(selected_job, tag)
+                                st.success("✅ All tags removed!")
                                 st.rerun()
             
             with tag_control_col2:
@@ -1099,12 +1262,15 @@ def show_tagged_jobs():
             st.info(f"You have {tagged_count} jobs tagged, but they're not in the currently loaded data.")
             return
         
-        # Add tag date and note columns
+        # Add tag date, note, and tags columns
         tagged_df['Tagged Date'] = tagged_df['job_id'].astype(str).apply(
             lambda x: (tagger.tag_dates.get(x, '')[:10] if tagger.tag_dates.get(x, '') else 'Unknown')
         )
         tagged_df['Note'] = tagged_df['job_id'].astype(str).apply(
             lambda x: tagger.tag_notes.get(x, '') if x in tagger.tag_notes else ''
+        )
+        tagged_df['Tags'] = tagged_df['job_id'].astype(str).apply(
+            lambda x: ', '.join(tagger.get_job_tags(x)) if tagger.get_job_tags(x) else 'None'
         )
         
         st.success(f"Found {len(tagged_df)} tagged jobs in current dataset")
@@ -1134,7 +1300,7 @@ def show_tagged_jobs():
             sorted_tagged = sorted_tagged.sort_values(by=sort_by_tagged, ascending=ascending_tagged, na_position='last')
         
         # Display columns
-        default_tagged_cols = ["Company", "Title", "Location Type", "Country", "City", "Min Salary", "Max Salary", "Job Link", "Tagged Date"]
+        default_tagged_cols = ["Company", "Title", "Tags", "Location Type", "Country", "City", "Min Salary", "Max Salary", "Job Link", "Tagged Date"]
         available_tagged_cols = [c for c in sorted_tagged.columns if c not in ['Note']]
         
         display_tagged_cols = st.multiselect(
