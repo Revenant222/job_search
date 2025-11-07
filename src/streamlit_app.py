@@ -11,10 +11,12 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from typing import Dict, Any, Optional
+import time
 
 # Import our modules
 from src.core.data_processor import DataProcessor
 from src.core.job_filter import JobFilter
+from src.core.job_tagger import JobTagger
 from config.settings import FUZZY_MATCH_THRESHOLDS, APPLICATION_STATUS_OPTIONS
 from src.utils.logger import app_logger
 
@@ -44,6 +46,8 @@ def main():
         st.session_state.filter_history = []
     if 'saved_filters' not in st.session_state:
         st.session_state.saved_filters = {}
+    if 'job_tagger' not in st.session_state:
+        st.session_state.job_tagger = JobTagger()
     
     # Sidebar for data loading
     with st.sidebar:
@@ -78,11 +82,21 @@ def main():
             
             if st.session_state.filtered_data is not None:
                 st.metric("Filtered Jobs", len(st.session_state.filtered_data))
+            
+            # Tagged jobs count
+            tagged_count = st.session_state.job_tagger.get_tagged_count()
+            if tagged_count > 0:
+                st.divider()
+                st.metric("⭐ Tagged Jobs", tagged_count)
+                if st.button("View Tagged Jobs", use_container_width=True, key="sidebar_view_tagged"):
+                    st.session_state['goto_tagged_tab'] = True
     
     # Main content area
     if st.session_state.data_loaded:
         # Create tabs
-        tab1, tab2, tab3 = st.tabs(["🎯 Filter Configuration", "📊 Results", "📈 Data Analysis"])
+        tagged_count = st.session_state.job_tagger.get_tagged_count()
+        tab_label = f"⭐ Tagged Jobs ({tagged_count})" if tagged_count > 0 else "⭐ Tagged Jobs"
+        tab1, tab2, tab3, tab4 = st.tabs(["🎯 Filter Configuration", "📊 Results", "📈 Data Analysis", tab_label])
         
         with tab1:
             show_filter_configuration()
@@ -92,6 +106,9 @@ def main():
         
         with tab3:
             show_data_analysis()
+        
+        with tab4:
+            show_tagged_jobs()
     else:
         st.info("👆 Please upload a CSV file to get started")
         
@@ -327,6 +344,28 @@ def show_filter_configuration():
                 )
             else:
                 job_types = []
+            
+            # Filter By Tag
+            st.divider()
+            tagger = st.session_state.job_tagger
+            
+            # Get all available tags from all jobs
+            all_tags = set()
+            for job_id, tags in tagger.job_tags.items():
+                all_tags.update(tags)
+            available_tags = sorted(list(all_tags))
+            
+            if available_tags:
+                saved_tags = st.session_state.get('load_filter_config', {}).get('tags', [])
+                selected_tags = st.multiselect(
+                    "🏷️ Filter By Tag",
+                    options=available_tags,
+                    default=saved_tags if saved_tags else [],
+                    help="Filter to show only jobs with selected tags. Jobs matching ANY selected tag will be shown."
+                )
+            else:
+                selected_tags = []
+                st.info("No tags available. Tag jobs in the Results tab to filter by tags.")
         
         with col2:
             st.subheader("Keyword & Range Filters")
@@ -338,7 +377,7 @@ def show_filter_configuration():
             title_keywords_input = st.text_area(
                 "Title Keywords",
                 value=saved_title_kw_text,
-                help="Enter keywords to search in job titles. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'data science' is one keyword). Use commas or new lines to separate multiple keywords. Multi-word phrases are matched intelligently.",
+                help="Enter keywords to search in job titles. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'data science' is one keyword). Use commas or new lines to separate multiple keywords. Multiple keywords use OR logic - jobs matching ANY keyword will be included.",
                 height=100,
                 placeholder="data science\nmachine learning\nor: python, java, cloud engineer"
             )
@@ -370,7 +409,7 @@ def show_filter_configuration():
             skills_keywords_input = st.text_area(
                 "Skills Keywords",
                 value=saved_skills_kw_text,
-                help="Enter skills to search for. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'machine learning' is one keyword). Use commas or new lines to separate multiple keywords. Multi-word phrases are matched intelligently.",
+                help="Enter skills to search for. Each line or comma-separated phrase will be treated as a single keyword. Spaces within keywords are preserved (e.g., 'machine learning' is one keyword). Use commas or new lines to separate multiple keywords. Multiple keywords use OR logic - jobs matching ANY keyword will be included.",
                 height=100,
                 placeholder="machine learning\npython programming\nor: aws, docker, kubernetes"
             )
@@ -471,16 +510,24 @@ def show_filter_configuration():
                 company_categories, overall_job_categories, job_categories,
                 location_types, job_types, title_keywords, skills_keywords,
                 min_experience, max_experience, min_salary, max_salary,
-                title_threshold, skills_threshold, geography_threshold
+                title_threshold, skills_threshold, geography_threshold,
+                selected_tags
             )
 
 
 def apply_filters(company_categories, overall_job_categories, job_categories,
                  location_types, job_types, title_keywords, skills_keywords,
                  min_experience, max_experience, min_salary, max_salary,
-                 title_threshold, skills_threshold, geography_threshold):
+                 title_threshold, skills_threshold, geography_threshold,
+                 selected_tags=None):
     """Apply filters to the data."""
     try:
+        # Ensure job_id exists in raw_data (needed for tag filtering)
+        if 'job_id' not in st.session_state.raw_data.columns:
+            from src.core.data_processor import DataProcessor
+            processor = DataProcessor()
+            st.session_state.raw_data = processor.add_job_ids(st.session_state.raw_data)
+        
         # Prepare filter configuration
         filters = {
             "company_categories": company_categories,
@@ -497,7 +544,8 @@ def apply_filters(company_categories, overall_job_categories, job_categories,
             "salary_range": {
                 "min": min_salary,
                 "max": max_salary
-            }
+            },
+            "tags": selected_tags or []
         }
         
         # Update thresholds
@@ -513,9 +561,10 @@ def apply_filters(company_categories, overall_job_categories, job_categories,
             "thresholds": thresholds
         }
         
-        # Apply filters
+        # Apply filters (pass tag_checker for tag filtering)
         job_filter = JobFilter(thresholds)
-        filtered_df = job_filter.apply_filters(st.session_state.raw_data, filters)
+        tagger = st.session_state.job_tagger
+        filtered_df = job_filter.apply_filters(st.session_state.raw_data, filters, tag_checker=tagger)
         
         # Store results
         st.session_state.filtered_data = filtered_df
@@ -686,11 +735,226 @@ def show_results():
             if col not in display_cols:
                 display_df_sorted[col] = sorted_df[col]
         
-        st.dataframe(
-            display_df_sorted,
-            width='stretch',
-            hide_index=True
-        )
+        # Add row numbers for quick selection
+        if 'job_id' in sorted_df.columns:
+            # Reset index to get sequential row numbers after sorting/pagination
+            display_df_sorted = display_df_sorted.reset_index(drop=True)
+            display_df_sorted['#'] = range(1, len(display_df_sorted) + 1)
+            
+            tagger = st.session_state.job_tagger
+            display_df_sorted['⭐ Tagged'] = sorted_df.reset_index(drop=True)['job_id'].astype(str).apply(
+                lambda x: '✅' if tagger.is_tagged(x) else ''
+            )
+            # Reorder to show row number and tag column first
+            cols = ['#', '⭐ Tagged'] + [c for c in display_df_sorted.columns if c not in ['#', '⭐ Tagged']]
+            display_df_sorted = display_df_sorted[cols]
+            
+            # Store mapping of row number to job_id for quick selection
+            # Important: display_df_sorted has been reset_index, so idx matches row numbers
+            row_to_job_id = {}
+            sorted_df_reset = sorted_df.reset_index(drop=True)
+            for idx, row_num in enumerate(display_df_sorted['#']):
+                job_id = str(sorted_df_reset.iloc[idx]['job_id'])
+                row_to_job_id[row_num] = job_id
+            st.session_state['row_to_job_id'] = row_to_job_id
+        
+        # Use interactive dataframe with row selection (if supported)
+        selected_job_id_from_table = None
+        try:
+            # Try newer Streamlit API with selection
+            selected_rows = st.dataframe(
+                display_df_sorted,
+                hide_index=True,
+                selection_mode="single-row",
+                on_select="rerun",
+                key="results_dataframe"
+            )
+            
+            # Handle selection based on Streamlit version - only if row mapping exists
+            if selected_rows and 'row_to_job_id' in st.session_state:
+                # Newer API: selection is returned as dict
+                if isinstance(selected_rows, dict) and 'selection' in selected_rows:
+                    selected_indices = selected_rows['selection'].get('rows', [])
+                    if selected_indices and len(display_df_sorted) > 0:
+                        try:
+                            selected_row_num = display_df_sorted.iloc[selected_indices[0]]['#']
+                            selected_job_id_from_table = st.session_state['row_to_job_id'].get(selected_row_num)
+                        except (IndexError, KeyError):
+                            pass
+                # Check session state for selection (alternative API)
+                elif 'results_dataframe' in st.session_state:
+                    df_state = st.session_state['results_dataframe']
+                    if isinstance(df_state, dict) and 'selection' in df_state:
+                        selected_indices = df_state['selection'].get('rows', [])
+                        if selected_indices and len(display_df_sorted) > 0:
+                            try:
+                                selected_row_num = display_df_sorted.iloc[selected_indices[0]]['#']
+                                selected_job_id_from_table = st.session_state['row_to_job_id'].get(selected_row_num)
+                            except (IndexError, KeyError):
+                                pass
+        except TypeError:
+            # Fallback: selection_mode not supported in this Streamlit version
+            st.dataframe(
+                display_df_sorted,
+                hide_index=True
+            )
+        except Exception as e:
+            # Other errors - use basic dataframe
+            st.dataframe(
+                display_df_sorted,
+                hide_index=True
+            )
+            app_logger.debug(f"Dataframe selection error: {e}")
+        
+        # Tagging controls section
+        if 'job_id' in sorted_df.columns:
+            st.divider()
+            st.subheader("🏷️ Tag Jobs for Application")
+            
+            tag_control_col1, tag_control_col2, tag_control_col3 = st.columns(3)
+            
+            with tag_control_col1:
+                st.write("**Tag/Untag a Job:**")
+                st.caption("💡 Tip: Click a row in the table above to auto-select it here!")
+                
+                # Quick select by row number
+                quick_row_col1, quick_row_col2 = st.columns([2, 1])
+                with quick_row_col1:
+                    max_row = len(sorted_df)
+                    # Get current quick row selection from session state, or default to None
+                    current_quick_row = st.session_state.get('quick_row_input', None)
+                    quick_row = st.number_input(
+                        "Quick select by row #",
+                        min_value=1,
+                        max_value=max_row,
+                        value=current_quick_row if current_quick_row else 1,
+                        key="quick_row_select",
+                        help=f"Enter a row number (1-{max_row}) to quickly select that job, then click 'Select'"
+                    )
+                    # Store the input value
+                    st.session_state['quick_row_input'] = quick_row
+                
+                with quick_row_col2:
+                    if st.button("Select", key="quick_select_btn", use_container_width=True):
+                        row_to_job_map = st.session_state.get('row_to_job_id', {})
+                        if quick_row and quick_row in row_to_job_map:
+                            selected_job_id = row_to_job_map[quick_row]
+                            st.session_state['selected_job_from_row'] = selected_job_id
+                            st.session_state['last_selected_job_id'] = selected_job_id
+                            st.session_state['force_selectbox_update'] = True
+                            # Clear the selectbox key to force it to use new index
+                            if 'tag_job_select' in st.session_state:
+                                del st.session_state['tag_job_select']
+                            # Force rerun to update selectbox
+                            st.rerun()
+                        elif quick_row:
+                            st.warning(f"⚠️ Row {quick_row} not found in current results (max: {max_row})")
+                            st.write(f"Debug: Available rows: {list(row_to_job_map.keys())[:10]}...")  # Show first 10
+                        else:
+                            st.warning("⚠️ Please enter a valid row number")
+                
+                # Create selectbox for tagging
+                # Use reset_index to match row numbering with display_df_sorted
+                job_options = []
+                job_id_to_display = {}
+                sorted_df_reset = sorted_df.reset_index(drop=True)
+                for idx, (_, row) in enumerate(sorted_df_reset.iterrows()):
+                    job_id = str(row.get('job_id', ''))
+                    title = str(row.get('Title', 'Unknown'))[:60]
+                    company = str(row.get('Company', 'Unknown'))[:30]
+                    if job_id:
+                        display_text = f"{company} - {title}"
+                        job_options.append((job_id, display_text))
+                        job_id_to_display[job_id] = display_text
+                
+                if job_options:
+                    # Determine default selection: from table click, from quick row, or previous selection
+                    default_index = 0
+                    
+                    # Priority: table selection > quick row selection > previous selection
+                    # selected_job_id_from_table is set above from dataframe selection
+                    default_job_id = None
+                    
+                    if selected_job_id_from_table and selected_job_id_from_table in [opt[0] for opt in job_options]:
+                        default_job_id = selected_job_id_from_table
+                        # Store for persistence across reruns
+                        st.session_state['last_selected_job_id'] = selected_job_id_from_table
+                    elif st.session_state.get('selected_job_from_row'):
+                        candidate_job_id = st.session_state['selected_job_from_row']
+                        if candidate_job_id in [opt[0] for opt in job_options]:
+                            default_job_id = candidate_job_id
+                            st.session_state['last_selected_job_id'] = default_job_id
+                            # Show confirmation
+                            st.info(f"✅ Selecting job from row {st.session_state.get('quick_row_input', '?')}")
+                        # Don't delete yet - let selectbox use it first
+                    elif st.session_state.get('last_selected_job_id') and st.session_state['last_selected_job_id'] in [opt[0] for opt in job_options]:
+                        default_job_id = st.session_state['last_selected_job_id']
+                    
+                    # Fallback to first option if no valid selection
+                    if default_job_id is None:
+                        default_job_id = job_options[0][0]
+                    
+                    # Find index of default job
+                    default_index = next((i for i, opt in enumerate(job_options) if opt[0] == default_job_id), 0)
+                    
+                    # Create a unique key that changes when we force update
+                    selectbox_key = "tag_job_select"
+                    if st.session_state.get('force_selectbox_update', False):
+                        # Use a timestamp-based key to force new widget
+                        import time
+                        selectbox_key = f"tag_job_select_{int(time.time() * 1000)}"
+                        del st.session_state['force_selectbox_update']
+                    
+                    # Clear selected_job_from_row after we've determined the index
+                    if 'selected_job_from_row' in st.session_state:
+                        del st.session_state['selected_job_from_row']
+                    
+                    selected_job = st.selectbox(
+                        "Select a job to tag/untag",
+                        options=[opt[0] for opt in job_options],
+                        format_func=lambda x: job_id_to_display.get(x, x),
+                        index=default_index,
+                        key=selectbox_key
+                    )
+                    
+                    if selected_job:
+                        tagger = st.session_state.job_tagger
+                        is_tagged = tagger.is_tagged(selected_job)
+                        if is_tagged:
+                            if st.button("❌ Untag Job", key="untag_btn", use_container_width=True):
+                                tagger.untag_job(selected_job)
+                                st.success("✅ Job untagged!")
+                                st.rerun()
+                        else:
+                            if st.button("⭐ Tag Job", key="tag_btn", use_container_width=True):
+                                tagger.tag_job(selected_job)
+                                st.success("✅ Job tagged! View in 'Tagged Jobs' tab.")
+                                st.rerun()
+            
+            with tag_control_col2:
+                st.write("**Stats:**")
+                tagger = st.session_state.job_tagger
+                tagged_in_results = sum(1 for job_id in sorted_df['job_id'].astype(str) if tagger.is_tagged(job_id))
+                st.metric("Tagged in Results", tagged_in_results)
+                st.caption(f"Total tagged: {tagger.get_tagged_count()}")
+                if tagged_in_results > 0:
+                    if st.button("📋 View All Tagged", key="view_tagged_btn", use_container_width=True):
+                        st.info("Go to the '⭐ Tagged Jobs' tab to see all tagged jobs")
+            
+            with tag_control_col3:
+                st.write("**Export Tagged:**")
+                if tagged_in_results > 0:
+                    tagged_jobs = sorted_df[sorted_df['job_id'].astype(str).isin(tagger.get_tagged_job_ids())]
+                    csv = tagged_jobs.to_csv(index=False)
+                    st.download_button(
+                        label=f"📥 Download {tagged_in_results} Tagged",
+                        data=csv,
+                        file_name=f"tagged_jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.info("No tagged jobs in current results")
     
     # Download options
     st.subheader("📥 Download Results")
@@ -716,6 +980,176 @@ def show_results():
                 file_name=f"all_jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv"
             )
+
+
+def show_tagged_jobs():
+    """Show tagged jobs for application."""
+    st.header("⭐ Tagged Jobs - Ready to Apply")
+    
+    tagger = st.session_state.job_tagger
+    tagged_count = tagger.get_tagged_count()
+    
+    if tagged_count == 0:
+        st.info("No jobs tagged yet. Tag jobs from the Results tab to track jobs you want to apply for.")
+        st.markdown("""
+        **How to tag jobs:**
+        1. Go to the **📊 Results** tab
+        2. Apply filters to find jobs you're interested in
+        3. Use the tagging controls to mark jobs you want to apply for
+        4. Tagged jobs will appear here for easy access
+        """)
+        return
+    
+    # Summary stats
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Tagged Jobs", tagged_count)
+    with col2:
+        if st.button("🔄 Refresh from Current Data", use_container_width=True):
+            st.rerun()
+    with col3:
+        if st.button("🗑️ Clear All Tags", use_container_width=True, help="Remove all tags"):
+            if st.session_state.get('confirm_clear_tags', False):
+                tagger.clear_all_tags()
+                st.success("✅ All tags cleared!")
+                st.session_state['confirm_clear_tags'] = False
+                st.rerun()
+            else:
+                st.session_state['confirm_clear_tags'] = True
+                st.warning("⚠️ Click again to confirm clearing all tags")
+                st.rerun()
+    
+    # Get tagged jobs from current data
+    if not st.session_state.data_loaded or st.session_state.raw_data is None:
+        st.warning("Please load data first to view tagged jobs")
+        return
+    
+    tagged_ids = tagger.get_tagged_job_ids()
+    raw_data = st.session_state.raw_data
+    
+    # Filter to only tagged jobs
+    if 'job_id' in raw_data.columns:
+        tagged_df = raw_data[raw_data['job_id'].astype(str).isin(tagged_ids)].copy()
+        
+        if len(tagged_df) == 0:
+            st.warning("Tagged jobs not found in current dataset. They may be from a different CSV file.")
+            st.info(f"You have {tagged_count} jobs tagged, but they're not in the currently loaded data.")
+            return
+        
+        # Add tag date and note columns
+        tagged_df['Tagged Date'] = tagged_df['job_id'].astype(str).apply(
+            lambda x: (tagger.tag_dates.get(x, '')[:10] if tagger.tag_dates.get(x, '') else 'Unknown')
+        )
+        tagged_df['Note'] = tagged_df['job_id'].astype(str).apply(
+            lambda x: tagger.tag_notes.get(x, '') if x in tagger.tag_notes else ''
+        )
+        
+        st.success(f"Found {len(tagged_df)} tagged jobs in current dataset")
+        
+        # Sorting
+        sort_col1, sort_col2 = st.columns(2)
+        with sort_col1:
+            sort_by_tagged = st.selectbox(
+                "Sort by",
+                options=["Tagged Date", "Company", "Title", "Min Salary", "Max Salary"],
+                key="tagged_sort"
+            )
+        with sort_col2:
+            sort_order_tagged = st.selectbox(
+                "Order",
+                options=["Descending", "Ascending"],
+                index=0,
+                key="tagged_order"
+            )
+        
+        # Apply sorting
+        sorted_tagged = tagged_df.copy()
+        ascending_tagged = (sort_order_tagged == "Ascending")
+        if sort_by_tagged == "Tagged Date":
+            sorted_tagged = sorted_tagged.sort_values(by="Tagged Date", ascending=ascending_tagged, na_position='last')
+        elif sort_by_tagged in sorted_tagged.columns:
+            sorted_tagged = sorted_tagged.sort_values(by=sort_by_tagged, ascending=ascending_tagged, na_position='last')
+        
+        # Display columns
+        default_tagged_cols = ["Company", "Title", "Location Type", "Country", "City", "Min Salary", "Max Salary", "Job Link", "Tagged Date"]
+        available_tagged_cols = [c for c in sorted_tagged.columns if c not in ['Note']]
+        
+        display_tagged_cols = st.multiselect(
+            "Select columns to display",
+            options=available_tagged_cols,
+            default=default_tagged_cols,
+            key="tagged_display_cols"
+        )
+        
+        if display_tagged_cols:
+            # Show tag notes if any
+            jobs_with_notes = sorted_tagged[sorted_tagged['Note'].str.strip() != '']
+            if len(jobs_with_notes) > 0:
+                with st.expander(f"📝 Jobs with Notes ({len(jobs_with_notes)})", expanded=False):
+                    for idx, row in jobs_with_notes.iterrows():
+                        st.write(f"**{row.get('Company', 'Unknown')} - {row.get('Title', 'Unknown')}**")
+                        st.caption(row['Note'])
+                        st.divider()
+            
+            display_tagged_df = sorted_tagged[display_tagged_cols].copy()
+            
+            st.dataframe(
+                display_tagged_df,
+                hide_index=True
+            )
+            
+            # Individual job actions
+            st.subheader("🔧 Manage Tagged Jobs")
+            
+            job_action_col1, job_action_col2 = st.columns(2)
+            
+            with job_action_col1:
+                st.write("**Untag a Job:**")
+                untag_options = []
+                for idx, row in sorted_tagged.iterrows():
+                    job_id = str(row.get('job_id', ''))
+                    title = str(row.get('Title', 'Unknown'))
+                    company = str(row.get('Company', 'Unknown'))
+                    if job_id:
+                        untag_options.append((job_id, f"{company} - {title[:50]}"))
+                
+                if untag_options:
+                    selected_untag = st.selectbox(
+                        "Select job to untag",
+                        options=[opt[0] for opt in untag_options],
+                        format_func=lambda x: next((opt[1] for opt in untag_options if opt[0] == x), x),
+                        key="untag_select"
+                    )
+                    
+                    if st.button("❌ Untag Selected Job", key="untag_selected", use_container_width=True):
+                        tagger.untag_job(selected_untag)
+                        st.success("✅ Job untagged!")
+                        st.rerun()
+            
+            with job_action_col2:
+                st.write("**Export Options:**")
+                # Export all tagged
+                csv_all = sorted_tagged.to_csv(index=False)
+                st.download_button(
+                    label=f"📥 Download All Tagged ({len(sorted_tagged)})",
+                    data=csv_all,
+                    file_name=f"all_tagged_jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                
+                # Export selected columns only
+                if display_tagged_cols:
+                    csv_selected = sorted_tagged[display_tagged_cols].to_csv(index=False)
+                    st.download_button(
+                        label=f"📥 Download Selected Columns",
+                        data=csv_selected,
+                        file_name=f"tagged_jobs_selected_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+    else:
+        st.warning("Job IDs not found in data. Cannot display tagged jobs.")
 
 
 def show_data_analysis():
@@ -777,7 +1211,7 @@ def show_data_analysis():
             [(col, info["count"], info["percentage"]) for col, info in summary["missing_data"].items()],
             columns=["Column", "Missing Count", "Missing Percentage"]
         )
-        st.dataframe(missing_df, width='stretch')
+        st.dataframe(missing_df)
 
 
 if __name__ == "__main__":

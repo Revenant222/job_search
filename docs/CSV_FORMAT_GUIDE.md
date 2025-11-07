@@ -203,8 +203,12 @@ Gaming Company,Activision,Data & Analytics,Data-analysis,Senior Manager Data Sci
 **Problem:** `$134,320` in the CSV
 
 **Solution:** 
-- Use Excel's Find & Replace to remove `$` and `,`
-- Or use formula: `=VALUE(SUBSTITUTE(SUBSTITUTE(P2,"$",""),",",""))`
+- **Option 1 (Recommended):** Use the automated cleaning script:
+  ```powershell
+  python scripts/utilities/clean_csv_salaries.py your_file.csv
+  ```
+- **Option 2:** Use Excel's Find & Replace to remove `$` and `,`
+- **Option 3:** Use formula: `=VALUE(SUBSTITUTE(SUBSTITUTE(P2,"$",""),",",""))`
 
 ### Issue 2: Date Format Wrong
 

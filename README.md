@@ -61,9 +61,33 @@ job_search/
 │   ├── tools/                 # Available tools and utilities
 │   ├── docs/                  # Technical documentation
 │   └── notes/                 # Project notes and tracking
-├── .git/                      # Git repository
-├── README.md                  # This file
-└── [future code directories]
+├── config/                     # Configuration files
+│   ├── settings.py            # Application settings
+│   └── *_template.json        # Credential templates
+├── data/                       # Data storage
+│   ├── csv_source/            # Source CSV files (from Google Sheets)
+│   ├── csv_output/            # Generated CSV outputs
+│   ├── examples/              # Example CSV files
+│   └── job_tags.json          # Job tagging data (gitignored)
+├── docs/                       # User-facing documentation
+│   ├── SETUP_GUIDE.md         # Setup instructions
+│   ├── CSV_FORMAT_GUIDE.md    # CSV format documentation
+│   └── ...                    # Other guides
+├── logs/                       # Application logs
+├── scripts/                    # Utility and test scripts
+│   ├── batch/                 # Batch/PowerShell scripts
+│   ├── tests/                 # Test scripts
+│   └── utilities/             # Utility scripts
+├── src/                        # Source code
+│   ├── core/                  # Core functionality
+│   ├── ui/                    # UI components
+│   ├── utils/                 # Utility modules
+│   ├── main.py                # Main entry point
+│   └── streamlit_app.py       # Streamlit application
+├── tests/                      # Unit tests
+├── README.md                   # This file
+├── requirements.txt            # Python dependencies
+└── setup.py                    # Package setup
 ```
 
 ## 🛠️ Development Setup
@@ -101,6 +125,9 @@ job_search/
 ## 📚 Documentation
 
 ### Project Documentation
+- [Setup Guide](docs/SETUP_GUIDE.md) - Complete setup instructions
+- [Google Service Account Setup Walkthrough](docs/GOOGLE_SERVICE_ACCOUNT_SETUP_WALKTHROUGH.md) - **Step-by-step guide with screenshots for Google Sheets integration**
+- [CSV Format Guide](docs/CSV_FORMAT_GUIDE.md) - CSV file format documentation
 - [Project Checklist](.cursor/notes/project_checklist.md) - Main project tracking
 - [Agent Notes](.cursor/notes/agentnotes.md) - Critical session information
 - [Project Notebook](.cursor/notes/notebook.md) - Research and findings

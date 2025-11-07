@@ -106,6 +106,9 @@ class DataProcessor:
         """
         Create unique identifier for a job.
         
+        Handles empty fields consistently to avoid false positives in delta detection.
+        Uses Company+Title+City, with fallbacks for empty values.
+        
         Args:
             job_row: Job data as dictionary
             
@@ -115,7 +118,22 @@ class DataProcessor:
         # Use stable fields for ID generation
         company = str(job_row.get("Company", "")).lower().strip()
         title = str(job_row.get("Title", "")).lower().strip()
-        location = str(job_row.get("City", "")).lower().strip()
+        city = str(job_row.get("City", "")).lower().strip()
+        
+        # Handle empty values consistently
+        # If City is empty, try State, then Country, then use empty string
+        if not city:
+            state = str(job_row.get("State", "")).lower().strip()
+            country = str(job_row.get("Country", "")).lower().strip()
+            # Use state if available, otherwise country, otherwise empty
+            location = state if state else (country if country else "")
+        else:
+            location = city
+        
+        # Normalize empty strings to consistent value
+        company = company if company else ""
+        title = title if title else ""
+        location = location if location else ""
         
         # Create stable key
         stable_key = f"{company}|{title}|{location}"

@@ -34,15 +34,15 @@ I've created a Python script that will automatically clean your CSV file.
 # Activate virtual environment
 .venv\Scripts\Activate.ps1
 
-# Run the cleaning script
-python clean_csv_salaries.py my_jobs.csv
+# Run the cleaning script (from project root)
+python scripts/utilities/clean_csv_salaries.py my_jobs.csv
 ```
 
 This will create a new file: `my_jobs_cleaned.csv` with all salaries fixed!
 
 **Or specify output filename:**
 ```powershell
-python clean_csv_salaries.py my_jobs.csv cleaned_jobs.csv
+python scripts/utilities/clean_csv_salaries.py my_jobs.csv cleaned_jobs.csv
 ```
 
 ---
@@ -125,7 +125,7 @@ After cleaning, test it in the application:
 **Command to clean your CSV:**
 ```powershell
 .venv\Scripts\Activate.ps1
-python clean_csv_salaries.py your_file.csv
+python scripts/utilities/clean_csv_salaries.py your_file.csv
 ```
 
 **What the script does:**

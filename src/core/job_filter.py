@@ -34,7 +34,7 @@ class JobFilter:
             "filter_results": {}
         }
     
-    def apply_filters(self, df: pd.DataFrame, filters: Dict[str, Any]) -> pd.DataFrame:
+    def apply_filters(self, df: pd.DataFrame, filters: Dict[str, Any], tag_checker: Any = None) -> pd.DataFrame:
         """
         Apply all filters to the DataFrame.
         
@@ -112,6 +112,11 @@ class JobFilter:
                 filtered_df, "JobType", filters["job_types"]
             )
         
+        if "tags" in filters and filters["tags"]:
+            filtered_df = self.filter_by_tags(
+                filtered_df, filters["tags"], tag_checker
+            )
+        
         self.filter_stats["filtered_jobs"] = len(filtered_df)
         self.logger.info(f"Filtered {self.filter_stats['total_jobs']} jobs to {self.filter_stats['filtered_jobs']} jobs")
         
@@ -149,6 +154,8 @@ class JobFilter:
         """
         Filter by fuzzy keyword matching.
         
+        Uses OR logic: a job matches if ANY of the keywords match.
+        
         Args:
             df: DataFrame to filter
             column: Column name to filter on
@@ -171,7 +178,7 @@ class JobFilter:
         for idx, row in df.iterrows():
             text = str(row[column]) if pd.notna(row[column]) else ""
             if text:
-                # Find best match score
+                # Find best match score (OR logic: ANY keyword can match)
                 best_score = 0
                 for keyword in keywords:
                     matches = fuzzy_match_keywords(text, [keyword], threshold)
@@ -322,6 +329,44 @@ class JobFilter:
         }
         
         return df_filtered
+    
+    def filter_by_tags(self, df: pd.DataFrame, selected_tags: List[str], tag_checker: Any = None) -> pd.DataFrame:
+        """
+        Filter jobs by tags.
+        
+        Args:
+            df: DataFrame to filter (must have 'job_id' column)
+            selected_tags: List of tag names to filter by (jobs must have at least one of these tags)
+            tag_checker: Object with has_tag(job_id, tag) method (e.g., JobTagger instance)
+            
+        Returns:
+            Filtered DataFrame containing only jobs with at least one of the selected tags
+        """
+        if not selected_tags:
+            return df
+        
+        if 'job_id' not in df.columns:
+            self.logger.warning("Cannot filter by tags: 'job_id' column not found")
+            return df
+        
+        if tag_checker is None:
+            self.logger.warning("Cannot filter by tags: no tag_checker provided")
+            return df
+        
+        # Filter to jobs that have at least one of the selected tags
+        def has_any_tag(job_id: str) -> bool:
+            """Check if job has any of the selected tags."""
+            for tag in selected_tags:
+                if hasattr(tag_checker, 'has_tag') and tag_checker.has_tag(str(job_id), tag):
+                    return True
+            return False
+        
+        # Apply tag filter
+        mask = df['job_id'].astype(str).apply(has_any_tag)
+        filtered_df = df[mask].copy()
+        
+        self.logger.info(f"Tag filter ({selected_tags}): {len(df)} -> {len(filtered_df)} jobs")
+        return filtered_df
     
     def filter_by_salary_range(self, df: pd.DataFrame, min_salary: Optional[int], max_salary: Optional[int]) -> pd.DataFrame:
         """

@@ -53,7 +53,11 @@ DEBUG_MODE=False
 
 ### 4. Google Sheets Integration (Optional)
 
-If you want to use Google Sheets functionality:
+You can use either **OAuth2** (for interactive apps) or **Service Account** (for automated/background access).
+
+#### Option A: OAuth2 (User-Based Authentication)
+
+Best for interactive applications where users need to authenticate:
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select an existing one
@@ -64,6 +68,29 @@ If you want to use Google Sheets functionality:
    - Or update `GOOGLE_CREDENTIALS_PATH` in your `.env` file
 
 The template for the credentials file structure is available at `config/google_credentials_template.json`.
+
+#### Option B: Service Account (Automated Access)
+
+Best for automated/background jobs and read-only access:
+
+**📖 Complete Step-by-Step Walkthrough:** See [Google Service Account Setup Walkthrough](GOOGLE_SERVICE_ACCOUNT_SETUP_WALKTHROUGH.md) for detailed instructions with screenshots and direct links.
+
+**Quick Summary:**
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable the Google Sheets API for that project
+3. Create a service account in the project
+4. Download the JSON key file and save it as `config/service_account_credentials.json`
+5. Share your Google Sheet with the service account email (Viewer permission)
+6. Configure your `.env` file:
+   ```env
+   GOOGLE_USE_SERVICE_ACCOUNT=true
+   GOOGLE_SERVICE_ACCOUNT_PATH=config/service_account_credentials.json
+   GOOGLE_SHEETS_SCOPES=https://www.googleapis.com/auth/spreadsheets.readonly
+   ```
+
+**Quick Answer**: For view-only sheets, you don't need special GCP roles - just share the sheet with the service account email and use the `spreadsheets.readonly` scope.
+
+**For detailed instructions with screenshots and troubleshooting:** See [GOOGLE_SERVICE_ACCOUNT_SETUP_WALKTHROUGH.md](GOOGLE_SERVICE_ACCOUNT_SETUP_WALKTHROUGH.md)
 
 ## Running the Application
 
@@ -113,14 +140,26 @@ job_search/
 ├── .venv/                  # Virtual environment (don't commit)
 ├── config/                 # Configuration files
 │   ├── settings.py         # Application settings
-│   └── google_credentials_template.json
+│   └── *_template.json     # Credential templates
+├── data/                   # Data storage
+│   ├── csv_source/         # Source CSV files (from Google Sheets)
+│   ├── csv_output/         # Generated CSV outputs
+│   └── examples/           # Example CSV files
+├── docs/                    # User-facing documentation
+│   ├── SETUP_GUIDE.md      # This file
+│   ├── CSV_FORMAT_GUIDE.md # CSV format documentation
+│   └── ...                 # Other guides
+├── scripts/                 # Utility and test scripts
+│   ├── batch/              # Batch/PowerShell scripts
+│   ├── tests/              # Test scripts
+│   └── utilities/          # Utility scripts
 ├── src/                    # Source code
 │   ├── core/              # Core functionality
 │   ├── ui/                # UI components
 │   ├── utils/             # Utility functions
 │   ├── main.py            # Entry point
 │   └── streamlit_app.py   # Streamlit application
-├── tests/                  # Test files
+├── tests/                  # Unit tests
 ├── requirements.txt        # Python dependencies
 └── setup.py               # Package setup
 ```
@@ -151,13 +190,14 @@ If Google Sheets features don't work:
 
 - Run the Streamlit app to explore the UI
 - Upload a CSV file with job data to test filtering
-- Configure Google Sheets integration if needed
-- Review the project documentation in `.cursor/notes/` if available
+- Configure Google Sheets integration if needed (see [Google Service Account Setup Walkthrough](GOOGLE_SERVICE_ACCOUNT_SETUP_WALKTHROUGH.md))
+- Review the project documentation in `docs/` folder
 
 ## Support
 
 For issues or questions:
 - Check the README.md for project overview
-- Review the code documentation
-- Check the `.cursor/notes/` folder for development notes
+- Review the documentation in `docs/` folder
+- See [CSV Format Guide](CSV_FORMAT_GUIDE.md) for CSV formatting help
+- See [Quick Fix Guide](QUICK_FIX_GUIDE.md) for common issues
 

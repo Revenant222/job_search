@@ -40,9 +40,8 @@
 - [ ] Document any issues or improvements needed
 
 ### Upcoming Tasks
-- [ ] Google Sheets API integration (Phase 3)
+- [ ] **Backburner**: Add "Filter By Tag" multi-select dropdown to filter options
 - [ ] Web verification system (Phase 2)
-- [ ] Delta processing and sheet management
 - [ ] Testing and documentation
 - [ ] Performance optimization
 
@@ -50,7 +49,7 @@
 - None identified yet
 
 ### Issues and Blockers
-- Google API setup pending (user will handle at work)
+- ~~Google API setup pending (user will handle at work)~~ ✅ **RESOLVED** - Service account configured and tested
 - Sample data files need to be added to project for testing
 - Python environment setup needed for testing
 
@@ -61,6 +60,17 @@
 - Fuzzy matching is implemented with configurable thresholds
 - Direct job links should simplify web scraping in Phase 2
 - All core modules are implemented and ready for testing
+- **✅ Google Sheets Service Account**: Configured and tested successfully
+  - Service Account Email: `job-list-assistant@industrial-glow-475920-k2.iam.gserviceaccount.com`
+  - Credentials: `config/service_account_credentials.json`
+  - Test script: `test_service_account.py` (verified working)
+  - Helper script: `extract_sheet_id.py` (for extracting Sheet IDs from URLs)
+- **✅ Phase 3 Delta Analysis**: Implemented and tested
+  - Reads from Google Sheet: `1ZOJpVS3CcnrkwhpRgkP7tzf3wc4OWQj-uoWFfv4oHZE`, range `New Workbook!A8:Q`
+  - Delta detection with 79% match rate
+  - Automatic "NEW" tag assignment for new jobs
+  - Rolling backup system (CSV + tag file)
+  - Job ID generation with State/Country fallbacks for empty City fields
 
 ## Development Phases
 
@@ -86,12 +96,16 @@
 - [ ] Serial processing with progress tracking
 - [ ] Error reporting panel
 
-### Phase 3: Google Sheets Integration
-- [ ] Google API authentication setup
-- [ ] Sheet reading and writing functionality
-- [ ] Output sheet creation and formatting
-- [ ] Delta analysis implementation
-- [ ] Status preservation logic
+### Phase 3: Google Sheets Integration (✅ Mostly Complete)
+- [x] Google API authentication setup (Service Account configured and tested ✅)
+- [x] Sheet reading functionality (✅ Complete - reads from Google Sheets)
+- [x] Delta analysis implementation (✅ Complete - detects new jobs, tags with "NEW")
+- [x] CSV storage and rolling backup system (✅ Complete - maintains one backup file)
+- [x] Tag file backup system (✅ Complete - backs up before changes)
+- [x] Job ID generation with fallbacks (✅ Complete - handles empty City with State/Country fallback)
+- [ ] Sheet writing functionality (Not needed - using CSV for visualization)
+- [ ] Output sheet creation and formatting (Not needed - using CSV for visualization)
+- [ ] Status preservation logic (Using local tags instead)
 
 ### Phase 4: Advanced Features
 - [ ] Conditional formatting and sorting

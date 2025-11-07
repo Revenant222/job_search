@@ -130,7 +130,11 @@ dmypy.json
 
 # Project specific
 config/google_credentials.json
+config/service_account_credentials.json
 logs/*.log
 data/csv_source/*.csv
 data/csv_output/*.csv
+data/job_tags.json
+docs/IMPROVEMENTS_PROPOSED.md
+.cursor/
 *.env 
