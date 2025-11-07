@@ -17,7 +17,13 @@ import time
 from src.core.data_processor import DataProcessor
 from src.core.job_filter import JobFilter
 from src.core.job_tagger import JobTagger
-from config.settings import FUZZY_MATCH_THRESHOLDS, APPLICATION_STATUS_OPTIONS
+from src.core.delta_analyzer import DeltaAnalyzer
+from config.settings import (
+    FUZZY_MATCH_THRESHOLDS, 
+    APPLICATION_STATUS_OPTIONS,
+    GOOGLE_USE_SERVICE_ACCOUNT,
+    GOOGLE_SHEET_ID
+)
 from src.utils.logger import app_logger
 
 
@@ -63,6 +69,12 @@ def main():
             st.rerun()
         
         st.divider()
+        
+        # Google Sheets pull option (if configured)
+        if GOOGLE_USE_SERVICE_ACCOUNT and GOOGLE_SHEET_ID:
+            if st.button("📥 Pull from Google Sheets", help="Pull latest data from Google Sheets", use_container_width=True, key="pull_sheets"):
+                pull_from_google_sheets()
+            st.divider()
         
         # File upload
         uploaded_file = st.file_uploader(
@@ -110,7 +122,11 @@ def main():
         with tab4:
             show_tagged_jobs()
     else:
-        st.info("👆 Please upload a CSV file to get started")
+        # Show data loading options
+        if GOOGLE_USE_SERVICE_ACCOUNT and GOOGLE_SHEET_ID:
+            st.info("👆 Click 'Pull from Google Sheets' in the sidebar to load data, or upload a CSV file")
+        else:
+            st.info("👆 Please upload a CSV file to get started")
         
         # Show sample data structure
         st.subheader("Expected Data Structure")
@@ -137,6 +153,53 @@ def main():
         | Min Salary | Minimum salary | 50000 |
         | Max Salary | Maximum salary | 80000 |
         """)
+
+
+def pull_from_google_sheets():
+    """Pull data from Google Sheets using delta analyzer."""
+    try:
+        with st.spinner("Pulling data from Google Sheets..."):
+            # Initialize delta analyzer
+            delta_analyzer = DeltaAnalyzer()
+            
+            # Pull and analyze (this will also tag new jobs)
+            all_jobs_df, new_jobs_df = delta_analyzer.pull_and_analyze(tag_new_jobs=True)
+            
+            if all_jobs_df.empty:
+                st.error("No data retrieved from Google Sheets. Please check your configuration.")
+                return
+            
+            # Store in session state
+            st.session_state.raw_data = all_jobs_df
+            st.session_state.data_loaded = True
+            
+            # Generate filter options
+            data_processor = DataProcessor()
+            st.session_state.filter_options = data_processor.analyze_filter_options(all_jobs_df)
+            
+            # Get data summary
+            st.session_state.data_summary = data_processor.get_data_summary(all_jobs_df)
+            
+            # Show success message with new jobs info
+            if not new_jobs_df.empty:
+                st.success(f"✅ Successfully loaded {len(all_jobs_df)} jobs! ({len(new_jobs_df)} new jobs tagged)")
+            else:
+                st.success(f"✅ Successfully loaded {len(all_jobs_df)} jobs!")
+            
+            # Show new jobs notification if any
+            if not new_jobs_df.empty:
+                st.info(f"🆕 {len(new_jobs_df)} new jobs detected and tagged with 'NEW' tag")
+            
+    except Exception as e:
+        error_msg = str(e)
+        st.error(f"Error pulling from Google Sheets: {error_msg}")
+        app_logger.error(f"Error pulling from Google Sheets: {error_msg}")
+        
+        # Provide helpful error messages
+        if "credentials" in error_msg.lower() or "authentication" in error_msg.lower():
+            st.info("💡 Tip: Make sure your Google Service Account is set up correctly. See the setup guide for help.")
+        elif "permission" in error_msg.lower() or "access" in error_msg.lower():
+            st.info("💡 Tip: Make sure your Google Sheet is shared with the service account email address.")
 
 
 def load_data(uploaded_file):
