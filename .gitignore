@@ -137,4 +137,5 @@ data/csv_output/*.csv
 data/job_tags.json
 docs/IMPROVEMENTS_PROPOSED.md
 .cursor/
-*.env 
+*.env
+cleanup_logs.bat 
