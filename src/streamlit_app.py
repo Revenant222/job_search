@@ -886,10 +886,15 @@ def show_results():
             st.caption(f"Showing {start_idx + 1}-{min(end_idx, len(st.session_state.filtered_data))} of {len(st.session_state.filtered_data)} results")
     
     # Display options
+    available_columns = st.session_state.filtered_data.columns.tolist()
+    default_columns = ["Company", "Title", "Location Type", "Country", "City", "Job Link"]
+    # Filter default columns to only include those that exist in the dataframe
+    valid_defaults = [col for col in default_columns if col in available_columns]
+    
     display_cols = st.multiselect(
         "Select columns to display",
-        options=st.session_state.filtered_data.columns.tolist(),
-        default=["Company", "Title", "Location Type", "Country", "City", "Job Link"]
+        options=available_columns,
+        default=valid_defaults
     )
     
     if display_cols:

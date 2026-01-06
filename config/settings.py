@@ -38,7 +38,9 @@ GOOGLE_SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_SERVICE_ACCOUNT_PATH", "config/s
 
 # Google Sheets Configuration
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1ZOJpVS3CcnrkwhpRgkP7tzf3wc4OWQj-uoWFfv4oHZE")
-GOOGLE_SHEET_RANGE = os.getenv("GOOGLE_SHEET_RANGE", "New Workbook!A8:Q")
+# Default range: A1:Z (header detection will find the actual header row automatically)
+# You can override this in .env file if needed, but header auto-detection will use A1:Z anyway
+GOOGLE_SHEET_RANGE = os.getenv("GOOGLE_SHEET_RANGE", "New Workbook!A1:Z")
 GOOGLE_SHEET_CSV_FILENAME = os.getenv("GOOGLE_SHEET_CSV_FILENAME", "sheet_data.csv")
 
 # Application Configuration

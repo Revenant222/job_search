@@ -115,16 +115,109 @@ class SheetManager:
             self.logger.error(f"Error initializing Google Sheets service: {e}")
             return False
     
-    def read_existing_results(self, sheet_id: str, range_name: str = "Sheet1!A1:Z") -> pd.DataFrame:
+    def _detect_header_row(self, values: List[List[str]], max_rows_to_check: int = 30) -> int:
         """
-        Read existing results from Google Sheet.
+        Automatically detect which row contains the headers by looking for common column names.
+        
+        Uses multiple heuristics:
+        1. Matches common job-related column names
+        2. Checks for row with many non-empty cells (headers typically have 5+ columns)
+        3. Prefers rows that look like headers (mostly text, not numbers/dates)
+        
+        Args:
+            values: List of rows from the sheet
+            max_rows_to_check: Maximum number of rows to check (default: 30)
+            
+        Returns:
+            Index of the header row (0-based), or 0 if not found
+        """
+        if not values:
+            return 0
+        
+        # Common job-related column names to look for (case-insensitive)
+        # Expanded list to catch more variations
+        common_headers = [
+            'company', 'title', 'city', 'country', 'state', 'location',
+            'job link', 'joblink', 'url', 'link', 'activated date', 'date',
+            'skills', 'salary', 'experience', 'job type', 'location type',
+            'category', 'job category', 'company category', 'overall job category',
+            'min experience', 'max experience', 'min salary', 'max salary',
+            'jobtype', 'job_type', 'location_type', 'activated_date'
+        ]
+        
+        best_match_row = 0
+        best_match_score = 0
+        
+        # Check first N rows for header patterns
+        rows_to_check = min(max_rows_to_check, len(values))
+        
+        for row_idx in range(rows_to_check):
+            row = values[row_idx]
+            if not row or len(row) == 0:
+                continue
+            
+            # Convert row to lowercase strings for comparison
+            row_lower = [str(cell).strip().lower() if cell else '' for cell in row]
+            
+            # Heuristic 1: Count how many cells match common header names
+            match_score = 0
+            matched_headers = set()
+            for header in common_headers:
+                for cell in row_lower:
+                    if cell and (header in cell or cell in header):
+                        matched_headers.add(header)
+                        match_score += 2  # Higher weight for header matches
+                        break  # Count each header only once per row
+            
+            # Heuristic 2: Check if row has many non-empty cells (headers typically have 5+ columns)
+            non_empty_count = sum(1 for cell in row_lower if cell)
+            if non_empty_count >= 5:  # Headers typically have 5+ columns
+                match_score += 3
+            elif non_empty_count >= 3:
+                match_score += 1
+            
+            # Heuristic 3: Prefer rows where most cells are text (not numbers)
+            # Headers are usually text, data rows often have numbers
+            text_cells = 0
+            for cell in row_lower:
+                if cell:
+                    # Check if it's likely text (contains letters, not just numbers)
+                    if any(c.isalpha() for c in cell):
+                        text_cells += 1
+            
+            if non_empty_count > 0:
+                text_ratio = text_cells / non_empty_count
+                if text_ratio > 0.7:  # 70%+ text suggests headers
+                    match_score += 2
+            
+            # Prefer rows with higher match scores
+            if match_score > best_match_score:
+                best_match_score = match_score
+                best_match_row = row_idx
+        
+        self.logger.info(f"Detected header row at index {best_match_row} (row {best_match_row + 1}) with score {best_match_score}")
+        if best_match_score == 0:
+            self.logger.warning("No clear header row detected, using first row as headers")
+        
+        return best_match_row
+    
+    def read_existing_results(self, sheet_id: str, range_name: str = None, 
+                             auto_detect_headers: bool = True) -> pd.DataFrame:
+        """
+        Read existing results from Google Sheet with automatic header detection.
+        
+        When auto_detect_headers=True, always downloads from A1 to allow header detection.
+        The header row is automatically detected by analyzing the first 30 rows for common
+        job-related column names.
         
         Args:
             sheet_id: Google Sheets ID
-            range_name: A1 notation range (e.g., "New Workbook!A8:Q")
-                        Note: Using "A8:Q" will read all rows from row 8 onwards in columns A-Q.
-                        If you want all rows, you can use "A8:Q" and it will automatically
-                        read until the last row with data.
+            range_name: A1 notation range (e.g., "Sheet1!A1:Z"). 
+                        If None, extracts sheet name from config and uses A1:Z.
+                        If auto_detect_headers=True, range is forced to start from A1.
+            auto_detect_headers: If True, automatically detects the header row by scanning
+                                for common column names. Downloads from A1 regardless of range_name.
+                                If False, uses the first row as headers.
             
         Returns:
             DataFrame with existing results, or empty DataFrame if error
@@ -134,6 +227,41 @@ class SheetManager:
             return pd.DataFrame()
         
         try:
+            # Extract sheet name from config or range_name
+            sheet_name = None
+            
+            if range_name is None:
+                # Use config default to get sheet name, but always start from A1
+                from config.settings import GOOGLE_SHEET_RANGE
+                if '!' in GOOGLE_SHEET_RANGE:
+                    sheet_name = GOOGLE_SHEET_RANGE.split('!')[0]
+                else:
+                    sheet_name = "Sheet1"
+            elif '!' in range_name:
+                # Extract sheet name from provided range
+                sheet_name = range_name.split('!')[0]
+            else:
+                # No sheet name in range, use Sheet1
+                sheet_name = "Sheet1"
+            
+            # When auto-detecting headers, always download from A1 to get full context
+            if auto_detect_headers:
+                # Use a wide range to capture all columns (A1:Z covers columns A-Z)
+                # Google Sheets API will automatically stop at the last row with data
+                range_name = f"{sheet_name}!A1:Z"
+                self.logger.info(f"Auto-detecting headers: downloading from {range_name}")
+            else:
+                # Use provided range or construct from sheet name
+                if range_name and '!' in range_name:
+                    # Range already has sheet name, use as-is
+                    pass
+                else:
+                    # Construct range with sheet name
+                    if range_name and not range_name.startswith(sheet_name):
+                        range_name = f"{sheet_name}!{range_name}"
+                    elif not range_name:
+                        range_name = f"{sheet_name}!A1:Z"
+            
             self.logger.info(f"Reading from sheet {sheet_id}, range: {range_name}")
             
             # Read the data
@@ -148,11 +276,17 @@ class SheetManager:
                 self.logger.warning(f"No data found in range {range_name}")
                 return pd.DataFrame()
             
-            # First row is headers
-            headers = values[0] if values else []
-            
-            # Remaining rows are data
-            data_rows = values[1:] if len(values) > 1 else []
+            # Detect header row if auto-detection is enabled
+            header_row_idx = 0
+            if auto_detect_headers:
+                header_row_idx = self._detect_header_row(values)
+                headers = values[header_row_idx] if header_row_idx < len(values) else []
+                # Data rows start after the header row
+                data_rows = values[header_row_idx + 1:] if header_row_idx + 1 < len(values) else []
+            else:
+                # First row is headers (original behavior)
+                headers = values[0] if values else []
+                data_rows = values[1:] if len(values) > 1 else []
             
             # Create DataFrame
             if data_rows:
@@ -167,7 +301,7 @@ class SheetManager:
             # Clean up: remove completely empty rows
             df = df.dropna(how='all')
             
-            self.logger.info(f"Successfully read {len(df)} rows from sheet")
+            self.logger.info(f"Successfully read {len(df)} rows from sheet (header row: {header_row_idx + 1})")
             return df
             
         except HttpError as e:
